@@ -1,0 +1,21 @@
+BasedOnStyle: Google
+
+IndentWidth: 4
+# no column limit
+ColumnLimit: 0
+
+AlignTrailingComments: true
+AlignAfterOpenBracket: true
+IndentRequires: false
+
+# puts public, private, on the same column with class definition
+AccessModifierOffset: -4
+
+PackConstructorInitializers: BinPack
+# QualifierAlignment: Right # disabled because it breaks the code in some cases
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+AlignConsecutiveAssignments: Consecutive
+
+InsertNewlineAtEOF: true

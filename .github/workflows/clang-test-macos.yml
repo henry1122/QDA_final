@@ -1,0 +1,29 @@
+name: llvm-clang test (MacOS)
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop]
+
+jobs:
+  build-and-test:
+    runs-on: macos-latest
+    steps:
+      - name: Check out Git repository
+        uses: actions/checkout@v3
+      - name: Download llvm-clang, parallel and coreutils
+        run: |
+          brew install llvm@18 parallel coreutils
+          echo 'export PATH="$(brew --prefix)/opt/llvm@18/bin:$PATH"' >> /Users/runner/.bash_profile
+          echo 'export LDFLAGS="-L$(brew --prefix)/opt/llvm@18/lib"' >> /Users/runner/.bash_profile
+          echo 'export CPPFLAGS="-I$(brew --prefix)/opt/llvm@18/include"' >> /Users/runner/.bash_profile
+
+      - name: Build and test qsyn
+        run: |
+          source /Users/runner/.bash_profile
+          clang++ --version
+          echo "Building qsyn using $(sysctl -n hw.logicalcpu) cores"
+          mkdir -p build
+          make test -j $(sysctl -n hw.logicalcpu)

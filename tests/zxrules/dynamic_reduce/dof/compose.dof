@@ -1,0 +1,10 @@
+logger debug
+zx read benchmark/zx/tof3.zx
+zx copy 1
+zx optimize --dynamic
+zx print -s
+zx adjoint
+zx compose 0
+zx optimize --full
+zx test --identity
+quit -f

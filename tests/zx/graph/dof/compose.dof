@@ -1,0 +1,5 @@
+zx read benchmark/zx/cnot.zx
+zx read benchmark/zx/cnot.zx
+zx compose 0
+zx print -v
+quit -f

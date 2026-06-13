@@ -1,0 +1,7 @@
+logger
+logger debug
+logger
+logger --test
+logger error
+logger --test
+quit -f

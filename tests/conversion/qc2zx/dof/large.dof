@@ -1,0 +1,19 @@
+qcir read benchmark/SABRE/large/9symml_195.qasm
+qcir print --diagram
+qc2zx
+qcir new
+qcir qubit add 2
+qcir gate add x 0
+qc2zx
+qcir gate add cx --prepend 0 1
+qc2zx
+qcir read -r benchmark/SABRE/small/3_17_13.qasm
+qc2zx
+qcir print --diagram
+qcir new
+qcir qubit add 2
+qcir gate add y 0
+qcir gate add sy 1
+qcir gate add sdg 1
+qc2zx
+quit -f

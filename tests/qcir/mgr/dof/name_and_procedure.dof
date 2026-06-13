@@ -1,0 +1,9 @@
+qcir read benchmark/SABRE/large/adr4_197.qasm
+qc2zx
+zx optimize --full
+zx2qc
+qcir optimize --copy
+qcir list
+qcir
+
+quit -f
