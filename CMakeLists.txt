@@ -435,3 +435,60 @@ if(COMPILER_SUPPORTS_WNOERROR_CAST_USER_DEFINED)
     target_compile_options(${UNIT_TEST_NAME}
                            PRIVATE -Wno-error=cast-user-defined)
 endif()
+
+# ----------------------------------------------------------------------------
+# config for benchmark-phasepoly target
+# ----------------------------------------------------------------------------
+
+set(BENCHMARK_PHASEPOLY_NAME benchmark-phasepoly)
+
+add_executable(${BENCHMARK_PHASEPOLY_NAME} tools/benchmark_phasepoly.cpp)
+
+set_target_properties(
+    ${BENCHMARK_PHASEPOLY_NAME} PROPERTIES
+    OUTPUT_NAME ${BENCHMARK_PHASEPOLY_NAME}
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
+
+target_include_directories(
+    ${BENCHMARK_PHASEPOLY_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
+target_include_directories(
+    ${BENCHMARK_PHASEPOLY_NAME} SYSTEM PRIVATE ${CMAKE_SOURCE_DIR}/vendor)
+
+target_link_libraries(
+    ${BENCHMARK_PHASEPOLY_NAME} PRIVATE ${QSYN_LIB_NAME})
+
+target_link_libraries_system(
+    ${BENCHMARK_PHASEPOLY_NAME}
+    PRIVATE
+    libabc
+    xtl
+    xtensor
+    xtensor-blas
+    libfort::fort
+    fmt::fmt
+    spdlog::spdlog
+    Microsoft.GSL::GSL
+    sul::dynamic_bitset
+    nlohmann_json::nlohmann_json
+    cadical::cadical)
+
+target_link_libraries(
+    ${BENCHMARK_PHASEPOLY_NAME}
+    PRIVATE
+    lapack
+    ${BLAS_LIBRARIES}
+    ${LAPACK_LIBRARIES})
+
+target_compile_options(
+    ${BENCHMARK_PHASEPOLY_NAME}
+    PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+
+if(COMPILER_SUPPORTS_WNO_RESTRICT)
+    target_compile_options(${BENCHMARK_PHASEPOLY_NAME} PRIVATE -Wno-restrict)
+endif()
+
+if(COMPILER_SUPPORTS_WNOERROR_CAST_USER_DEFINED)
+    target_compile_options(${BENCHMARK_PHASEPOLY_NAME}
+                           PRIVATE -Wno-error=cast-user-defined)
+endif()

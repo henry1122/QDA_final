@@ -198,6 +198,10 @@ std::optional<QCir> from_qc(std::filesystem::path const& filepath) {
                 qcir.append(CCZGate(), qubit_ids);
             } else if ((type == "Z" || type == "z") && qubit_ids.size() == 2) {
                 qcir.append(CZGate(), qubit_ids);
+            } else if (type == "T*" || type == "t*") {
+                qcir.append(TdgGate(), qubit_ids);
+            } else if (type == "S*" || type == "s*") {
+                qcir.append(SdgGate(), qubit_ids);
             } else {
                 auto op = str_to_operation(type);
                 if (op.has_value()) {
