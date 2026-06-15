@@ -14,10 +14,11 @@
     --max-exp N       A* expansion cap (default: 100000)
     --no-todd         Skip full-circuit Todd comparison
 
-  For each .qc circuit the tool runs seven synthesis methods on the same input:
+  For each .qc circuit the tool runs synthesis methods on the same input:
 
-  Block-level methods (per CNOT+Rz block extracted by extract_phase_blocks):
-    pp          PhasePoly A*    joint optimization of [P | O]      (our method)
+  Block-level methods (per CNOT+Rz block):
+    pp(k)       PhasePoly A*    warm-start group synthesis (k=group size)
+                k=1: per-block independent; k>1: cross-block parity reuse
     mst+P       MST             Vandaele MST on P, then PMH(O)
     gstair+P    GStair          GraySynth(staircase) on P + PMH(O)
     gray+P      GraySynth       GraySynth(star) on P + PMH(O)
@@ -54,6 +55,7 @@ bool stop_requested() { return false; }
 #include "tableau/phasepoly/gaussian.hpp"
 #include "tableau/phasepoly/phase_block.hpp"
 #include "tableau/phasepoly/phase_poly_problem.hpp"
+#include "tableau/phasepoly/multiblock.hpp"
 #include "tableau/phasepoly/search.hpp"
 #include "tableau/stabilizer_tableau.hpp"
 #include "tableau/tableau_optimization.hpp"
@@ -153,7 +155,10 @@ struct CircuitResult {
     size_t n_qubits        = 0;
     size_t n_blocks        = 0;
     size_t total_rz        = 0;
-    size_t cx_phasepoly    = 0;
+    size_t cx_pp_k1        = 0;   // PhasePoly A* k=1 (per-block independent)
+    size_t cx_pp_k2        = 0;   // PhasePoly A* k=2 warm-start groups
+    size_t cx_pp_k3        = 0;   // PhasePoly A* k=3 warm-start groups
+    size_t cx_pp_k5        = 0;   // PhasePoly A* k=5 warm-start groups
     size_t cx_mst          = 0;
     size_t cx_gstair       = 0;
     size_t cx_gray         = 0;
@@ -175,23 +180,29 @@ static CircuitResult benchmark_circuit(fs::path const& path,
     auto& qcir = *qcir_opt;
 
     r.n_qubits = qcir.get_num_qubits();
-    auto const blocks = extract_phase_blocks(qcir);
-    r.n_blocks = blocks.size();
+    auto const extracted = extract_phase_blocks_with_boundaries(qcir);
+    r.n_blocks = extracted.blocks.size();
 
-    for (auto const& block : blocks) {
+    // k=1: per-block independent synthesis (same as before)
+    for (auto const& block : extracted.blocks) {
         auto const problem = phase_block_to_problem(block);
         auto const br      = benchmark_block(problem, cfg, max_rz);
         r.total_rz    += br.rz;
         // When PhasePoly A* is skipped (block > max_rz), fall back to MST so
         // the pp total is still a fair whole-circuit number, not artificially low.
         size_t pp_this = (br.cx_phasepoly == FAIL) ? br.cx_mst : br.cx_phasepoly;
-        r.cx_phasepoly += (pp_this == FAIL) ? 0 : pp_this;
+        r.cx_pp_k1    += (pp_this == FAIL) ? 0 : pp_this;
         r.cx_mst      += (br.cx_mst    == FAIL) ? 0 : br.cx_mst;
         r.cx_gstair   += (br.cx_gstair == FAIL) ? 0 : br.cx_gstair;
         r.cx_gray     += (br.cx_gray   == FAIL) ? 0 : br.cx_gray;
         r.cx_naive    += (br.cx_naive  == FAIL) ? 0 : br.cx_naive;
         if (br.cx_phasepoly == FAIL) r.pp_has_skipped = true;
     }
+
+    // k=2,3,5: warm-start group synthesis
+    r.cx_pp_k2 = synthesize_grouped(extracted, 2, cfg);
+    r.cx_pp_k3 = synthesize_grouped(extracted, 3, cfg);
+    r.cx_pp_k5 = synthesize_grouped(extracted, 5, cfg);
 
     // Full-circuit Todd+Naive comparison
     if (run_todd) {
@@ -281,16 +292,18 @@ int main(int argc, char** argv) {
 
     fmt::println("");
     // ---- Header ----
-    // Columns: circuit | q | blk | Rz | pp | mst+P | gstair+P | gray+P | naive+P | todd+naive
+    // Columns: circuit | q | blk | Rz | pp(1) | pp(2) | pp(3) | pp(5) | mst+P | gstair+P | gray+P | naive+P | todd+naive
+    // k = group size for warm-start multi-block synthesis
     static constexpr int NW = 38;
-    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>7}  {:>8}  {:>7}  {:>8}  {:>10}  {:>7}  {:>7}",
+    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {:>10}",
                  "circuit", NW, "q", "blk", "Rz",
-                 "pp", "mst+P", "gstair+P", "gray+P", "naive+P", "todd+naive",
-                 "pp/mst", "pp/gray");
-    int const LINE = NW + 3 + 4 + 5 + 7 + 7 + 8 + 7 + 8 + 10 + 7 + 7 + 12 * 2;
+                 "pp(1)", "pp(2)", "pp(3)", "pp(5)",
+                 "mst+P", "gstair+P", "gray+P", "naive+P", "todd+naive");
+    int const LINE = NW + 3 + 4 + 5 + 7 + 6 + 6 + 6 + 7 + 8 + 7 + 8 + 10 + 13 * 2;
     fmt::println("{}", std::string(LINE, '-'));
 
-    size_t tot_pp = 0, tot_mst = 0, tot_gstair = 0, tot_gray = 0, tot_naive = 0, tot_todd = 0;
+    size_t tot_pp_k1 = 0, tot_pp_k2 = 0, tot_pp_k3 = 0, tot_pp_k5 = 0;
+    size_t tot_mst = 0, tot_gstair = 0, tot_gray = 0, tot_naive = 0, tot_todd = 0;
     size_t n_todd = 0;
 
     for (auto const& r : results) {
@@ -298,22 +311,23 @@ int main(int argc, char** argv) {
             fmt::println("{:<{}}  (read failed)", r.name, NW);
             continue;
         }
-        double pct_mst  = r.cx_mst  > 0 ? 100.0 * r.cx_phasepoly / r.cx_mst  : 0.0;
-        double pct_gray = r.cx_gray > 0 ? 100.0 * r.cx_phasepoly / r.cx_gray : 0.0;
 
-        std::string todd_str = (r.cx_todd_naive == FAIL) ? "      n/a" :
+        std::string todd_str = (r.cx_todd_naive == FAIL) ? "       n/a" :
                                fmt::format("{:>10}", r.cx_todd_naive);
-        std::string pp_str   = r.pp_has_skipped ?
-                               fmt::format("{:>7}*", r.cx_phasepoly) :
-                               fmt::format("{:>7}", r.cx_phasepoly);
+        std::string pp1_str  = r.pp_has_skipped ?
+                               fmt::format("{:>7}*", r.cx_pp_k1) :
+                               fmt::format("{:>7}", r.cx_pp_k1);
 
-        fmt::println("{:<{}} {:>3} {:>4} {:>5}  {}  {:>7}  {:>8}  {:>7}  {:>8}  {}  {:>6.1f}%  {:>6.1f}%",
+        fmt::println("{:<{}} {:>3} {:>4} {:>5}  {}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {}",
                      r.name, NW, r.n_qubits, r.n_blocks, r.total_rz,
-                     pp_str, r.cx_mst, r.cx_gstair, r.cx_gray, r.cx_naive,
-                     todd_str,
-                     pct_mst, pct_gray);
+                     pp1_str, r.cx_pp_k2, r.cx_pp_k3, r.cx_pp_k5,
+                     r.cx_mst, r.cx_gstair, r.cx_gray, r.cx_naive,
+                     todd_str);
 
-        tot_pp     += r.cx_phasepoly;
+        tot_pp_k1  += r.cx_pp_k1;
+        tot_pp_k2  += r.cx_pp_k2;
+        tot_pp_k3  += r.cx_pp_k3;
+        tot_pp_k5  += r.cx_pp_k5;
         tot_mst    += r.cx_mst;
         tot_gstair += r.cx_gstair;
         tot_gray   += r.cx_gray;
@@ -322,22 +336,19 @@ int main(int argc, char** argv) {
     }
 
     fmt::println("{}", std::string(LINE, '-'));
-    double pct_mst  = tot_mst  > 0 ? 100.0 * tot_pp / tot_mst  : 0.0;
-    double pct_gray = tot_gray > 0 ? 100.0 * tot_pp / tot_gray : 0.0;
-
-    std::string todd_total = (n_todd == 0) ? "      n/a" :
+    std::string todd_total = (n_todd == 0) ? "       n/a" :
                              fmt::format("{:>10}", tot_todd);
-    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>7}  {:>8}  {:>7}  {:>8}  {}  {:>6.1f}%  {:>6.1f}%",
+    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {}",
                  "TOTAL", NW, "-", "-", "-",
-                 tot_pp, tot_mst, tot_gstair, tot_gray, tot_naive,
-                 todd_total,
-                 pct_mst, pct_gray);
+                 tot_pp_k1, tot_pp_k2, tot_pp_k3, tot_pp_k5,
+                 tot_mst, tot_gstair, tot_gray, tot_naive,
+                 todd_total);
 
     fmt::println("");
     fmt::println("Notes:");
+    fmt::println("  pp(k) = PhasePoly A* with warm-start group size k (k=1: per-block independent)");
     fmt::println("  mst+P / gstair+P / gray+P / naive+P = block-level synthesis + PMH output-matrix pass");
     fmt::println("  todd+naive = full-circuit Todd T-count opt (Tableau pipeline) + naive rotation synthesis");
-    fmt::println("  pp/mst and pp/gray are block-level CNOT ratios (lower is better for pp)");
     if (n_todd > 0 && n_todd < results.size())
         fmt::println("  todd+naive: {} / {} circuits succeeded", n_todd, results.size());
     fmt::println("  * = PhasePoly A* skipped for blocks with > {} Rz terms; MST used as fallback", max_rz);
