@@ -324,19 +324,19 @@ GroupResult synthesize_joint(PhasePolyProblem const& p0,
         while (open.size() > cfg.max_queue_size) open.erase(std::prev(open.end()));
     }
 
-    // Always compare against independent synthesis — guarantees pp(k>1) ≤ pp(k=1).
-    // The joint A* explores a larger state space and may not find the optimal
-    // single-block solutions; taking the minimum ensures no regression.
-    size_t const indep_cx = synthesize_phasepoly(p0, cfg).num_cx +
-                            synthesize_phasepoly(p1, cfg).num_cx;
-
-    if (solutions.empty()) return GroupResult{indep_cx, true};
+    if (solutions.empty()) {
+        // Budget exhausted without finding any solution: fall back to independent.
+        GroupResult r;
+        r.num_cx     = synthesize_phasepoly(p0, cfg).num_cx +
+                       synthesize_phasepoly(p1, cfg).num_cx;
+        r.used_fallback = true;
+        return r;
+    }
 
     JointState const* best = &solutions.front();
     for (auto const& sol : solutions)
         if (sol.g_cost < best->g_cost) best = &sol;
 
-    if (best->g_cost >= indep_cx) return GroupResult{indep_cx, false};
     return GroupResult{best->g_cost, false};
 }
 

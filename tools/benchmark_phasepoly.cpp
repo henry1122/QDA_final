@@ -353,7 +353,8 @@ int main(int argc, char** argv) {
     fmt::println("               columns from BOTH blocks simultaneously); trailing singleton");
     fmt::println("               within a group is synthesized independently.");
     fmt::println("          Infeasible pairs (H-boundary singularity) and budget-exhausted pairs");
-    fmt::println("          fall back to independent A* — so pp(k>1) >= pp(k=1) is impossible.");
+    fmt::println("          fall back to independent A* for correctness; otherwise the joint");
+    fmt::println("          A* result is reported as-is (may be > pp(k=1) if budget is tight).");
     fmt::println("  mst+P / gstair+P / gray+P / naive+P = block-level synthesis + PMH output-matrix pass");
     fmt::println("  todd+naive = full-circuit Todd T-count opt (Tableau pipeline) + naive rotation synthesis");
     if (n_todd > 0 && n_todd < results.size())
