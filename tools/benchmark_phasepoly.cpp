@@ -346,7 +346,14 @@ int main(int argc, char** argv) {
 
     fmt::println("");
     fmt::println("Notes:");
-    fmt::println("  pp(k) = PhasePoly A* with warm-start group size k (k=1: per-block independent)");
+    fmt::println("  pp(k) = PhasePoly A* with joint synthesis (Stage 6):");
+    fmt::println("          k=1: per-block independent A*");
+    fmt::println("          k>1: blocks partitioned into groups of k; each consecutive pair within");
+    fmt::println("               a group is synthesized jointly (a single CNOT can reduce parity");
+    fmt::println("               columns from BOTH blocks simultaneously); trailing singleton");
+    fmt::println("               within a group is synthesized independently.");
+    fmt::println("          Infeasible pairs (H-boundary singularity) and budget-exhausted pairs");
+    fmt::println("          fall back to independent A* — so pp(k>1) >= pp(k=1) is impossible.");
     fmt::println("  mst+P / gstair+P / gray+P / naive+P = block-level synthesis + PMH output-matrix pass");
     fmt::println("  todd+naive = full-circuit Todd T-count opt (Tableau pipeline) + naive rotation synthesis");
     if (n_todd > 0 && n_todd < results.size())
