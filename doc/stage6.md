@@ -168,6 +168,30 @@ to reduce parities in both blocks simultaneously.
 
 ---
 
+## Extended benchmark (28 circuits, --set extended, --no-todd)
+
+```
+circuit                                pp(1)  pp(2)  pp(3)  pp(5)   mst+P  gray+P
+Table-1 subtotal (19 circuits)         3869   3816   3842   3836    5638    5569
+----
+Adder8_pyzx                             157    156    157    156     225     230
+adder_8_pyzx                            319    319    317    317     444     463
+csla_mux_3_original_pyzx                 78     76     77     78     110     123
+csum_mux_9_corrected_pyzx               140    138    139    139     187     189
+hwb6_pyzx                               103    100    103    100     153     158
+mod_adder_1024_pyzx                    1352   1346   1349   1347    2211    2145
+nth_prime6_pyzx                         391    389    389    387     611     607
+qcla_adder_10_pyzx                      195    194    193    194     290     281
+qft_4_pyzx                               42     42     42     42      69      68
+----
+TOTAL (28 circuits)                    6646   6576   6608   6596    9938    9833
+```
+
+Joint A* k=2 achieves **6576 / 6646 = 1.1% fewer CNOTs** across 28 circuits.
+pp(k=2) is ≤ pp(k=1) for every single circuit (fallback guarantee holds).
+
+---
+
 ## Why k=2 beats k=3 and k=5
 
 For k=3, each group of 3 blocks processes pair (B_{3i}, B_{3i+1}) jointly
