@@ -1,0 +1,79 @@
+qcir print --diagram
+qcir gate add cx 0 1
+qcir qubit add
+qcir print --diagram
+qcir gate add h
+qcir gate add h 0
+qcir print --diagram
+qcir gate add cx 0 1
+qcir qubit add 3
+qcir print --diagram
+qcir gate add cx 0 2
+qcir print --diagram
+qcir gate add cx 1 3
+qcir print --diagram
+qcir gate add t 2
+qcir gate add cx 2 1
+qcir gate add x 3
+qcir gate add t 3
+qcir gate add cx 3 2
+qcir gate add cx 0 1
+qcir print --diagram
+qcir gate add rz --prepend -ph 0.00001 0
+qcir gate add rz --prepend -ph 1.2345 0
+qcir print --gate 10
+qcir print --gate 9
+qcir print --diagram
+qcir delete --all
+qcir read benchmark/SABRE/small/3_17_13.qasm
+qcir print --diagram
+qcir print --gate 1
+qcir print --diagram
+qcir print --gate 3
+qcir gate remove 1
+qcir print --gate 3
+qcir print --diagram
+qcir print --gate 33
+qcir gate remove 8
+qcir gate remove 10
+qcir qubit add 3
+qcir print --diagram
+qcir gate add cx 0 4
+qcir gate add h 5
+qcir qubit remove 3
+qcir qubit add 2
+qcir print --gate 36
+qcir print --diagram
+qcir gate add tdg 6
+qcir qubit remove 6
+qcir qubit remove 7
+qcir print --diagram
+qcir delete --all
+qcir read benchmark/SABRE/small/3_17_13.qasm
+qcir print --diagram
+qcir print --gate 1
+qcir print --gate 26
+qcir gate remove 24
+qcir print --gate 24
+qcir print --gate 26
+qcir print --gate 26
+qcir delete --all
+qcir read benchmark/SABRE/large/root_255.qasm
+qcir print --gate
+qcir print --diagram
+qcir read benchmark/SABRE/small/4gt13_92.qasm -r
+qcir print --gate
+qcir print --diagram
+qcir gate add cx 1 0
+qcir qubit add 2
+qcir gate add cx 4 6
+qcir print --diagram
+qcir qubit remove 6
+qcir qubit remove 5
+qcir print --diagram
+qcir gate add x 5
+qcir qubit add 2
+qcir print --diagram
+qcir gate add cx 7 8
+qcir print --diagram
+quit -f

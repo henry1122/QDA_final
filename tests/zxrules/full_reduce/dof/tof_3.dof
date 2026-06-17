@@ -1,0 +1,7 @@
+zx read benchmark/zx/tof3.zx
+zx print -v
+logger debug
+zx optimize --full
+logger warn
+zx print -v
+quit -f

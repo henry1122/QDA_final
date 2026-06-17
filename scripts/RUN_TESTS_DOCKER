@@ -1,0 +1,17 @@
+#! /usr/bin/env bash
+# Run tests in Docker without rebuilding the image every time.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+IMAGE="${QSYN_DOCKER_IMAGE:-qsyn-test-gcc}"
+if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+  docker build -t "${IMAGE}" -f docker/gcc-test.Dockerfile .
+fi
+
+docker run --rm \
+  --entrypoint /bin/bash \
+  --security-opt seccomp=unconfined \
+  -e QSYN_RUN_INTEGRATION=1 \
+  -v "$(pwd)":/app/qsyn:ro \
+  "${IMAGE}" \
+  -lc "sed -i 's/\r$//' /app/entrypoint.sh 2>/dev/null; /app/entrypoint.sh $*"

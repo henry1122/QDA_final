@@ -1,0 +1,60 @@
+qcir read benchmark/SABRE/small/rd32-v1_68.qasm
+qcir print --diagram
+qcir copy
+qcir print --diagram
+qcir read benchmark/SABRE/small/qft_4.qasm
+qc2zx
+qcir print --diagram
+qcir copy 0 -r
+qcir print --diagram
+qc2zx
+zx print -v
+zx adjoint
+zx compose 0
+zx print -v
+zx optimize --full
+zx print -v
+qcir delete --all
+zx delete --all
+qcir print --diagram
+qcir gate add cx 0 1
+qcir qubit add
+qcir print --diagram
+qcir gate add h
+qcir gate add h 0
+qcir print --diagram
+qcir gate add cx 0 1
+qcir qubit add 3
+qcir print --diagram
+qcir gate add cx 0 2
+qcir print --diagram
+qcir gate add cx 1 3
+qcir print --diagram
+qcir gate add t 2
+qcir gate add cx 2 1
+qcir gate add x 3
+qcir gate add t 3
+qcir gate add cx 3 2
+qcir gate add cx 0 1
+qcir print --diagram
+qcir gate add --prepend rz -ph 0.00001 0
+qcir gate add --prepend rz -ph 1.2345 0
+qcir print --gate 10
+qcir print --verbose --gate 9
+qcir print --diagram
+qcir gate remove 2
+qcir gate remove 4
+qcir gate remove 8
+qcir gate remove 7
+qcir qubit remove 1
+qcir print --diagram
+qcir copy
+qcir qubit add
+qcir print --diagram
+qcir gate add --prepend cx 0 3
+qcir gate add cx 1 3
+qcir gate add --prepend rz -ph 1.2345 0
+qcir print --diagram
+qc2zx
+zx print
+quit -f

@@ -1,0 +1,8 @@
+device read benchmark/topology/guadalupe_16.layout
+qcir read benchmark/SABRE/small/3_17_13.qasm
+duostra --check
+qcir print
+qcir list
+help map-equiv
+map-equiv -l 0 -p 1
+quit -f

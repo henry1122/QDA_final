@@ -1,0 +1,9 @@
+build/
+debug/
+qsyn
+qsyn-debug
+.git/
+benchmark/SABRE/large/
+benchmark/qft/qft_433*
+benchmark/qft/qft_127*
+**/.git

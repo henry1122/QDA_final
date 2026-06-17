@@ -1,0 +1,26 @@
+zx read benchmark/zx/cnot.zx
+zx print
+zx copy
+zx print
+zx vertex remove 1
+zx print
+zx checkout 0
+zx print
+zx delete --all
+zx read benchmark/zx/cnot.zx
+zx print
+zx copy
+zx print
+zx vertex remove 1
+zx print
+zx copy -r 0
+zx print
+zx delete --all
+zx read benchmark/zx/cnot.zx
+zx print -v
+zx copy
+zx edge add 0 5 HADAMARD
+zx print -v
+zx checkout 0
+zx print -v
+quit -f

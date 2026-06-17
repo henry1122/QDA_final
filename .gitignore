@@ -1,0 +1,35 @@
+# local env overrides (see .env.local.example)
+.env.local
+
+# cmake folders / build trees
+build/
+build-lint/
+debug/
+qsyn*
+!src/qsyn*
+!src/qsyn/qsyn*
+
+# for work-in-progress things
+wip/
+
+# vscode configuration files and folders
+.vscode
+
+# mac configuration files and folders
+.DS_Store
+
+# vim configuration files and folders
+.cache/
+compile_commands.json
+
+# log files
+*.log
+
+# doxygen, sphinx, and other documentation files and folders
+docs/_build/
+docs/_doxygen/
+docs/dev/api/
+docs/doc-coverage.info
+
+perf.data
+perf.data.old

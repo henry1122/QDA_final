@@ -1,0 +1,7 @@
+qcir read benchmark/qasm/tof3.qasm
+convert qc tableau
+convert tableau qcir -r mst
+qcir print --stat
+convert qc tableau
+convert tableau qcir -r phasepoly
+qcir print --stat

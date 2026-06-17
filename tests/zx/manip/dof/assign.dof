@@ -1,0 +1,17 @@
+qcir read benchmark/qasm/tof2.qasm
+qc2ts
+qc2zx
+zx print -v
+zx2ts
+tensor equiv 0 1
+zx print -v
+zx assign 0 I X pi
+zx assign 0 O X pi
+zx print -v
+zx2ts
+qcir new
+qcir qubit add 2
+qcir gate add cx 0 1
+qc2ts
+tensor equiv 2 3
+quit -f

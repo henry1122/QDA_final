@@ -1,0 +1,71 @@
+zx new
+zx vertex add input 0
+zx vertex add output 0
+zx vertex add input 1
+zx vertex add output 1
+zx vertex add z 0
+zx vertex add z pi
+zx vertex add input 2
+zx vertex add output 2
+zx vertex add input 3
+zx vertex add output 3
+
+zx edge add 0 4 SIMPLE
+zx edge add 4 1 SIMPLE
+zx edge add 2 5 SIMPLE
+zx edge add 5 3 SIMPLE
+zx edge add 6 7 SIMPLE
+zx edge add 8 9 SIMPLE
+
+logger trace
+zx2ts
+logger warn
+
+zx read benchmark/zx/cnot.zx
+zx read benchmark/zx/cnot.zx
+zx checkout 0
+zx tensor-product 1
+
+logger trace
+zx2ts
+logger warn
+
+zx new
+zx vertex add input 0
+zx vertex add output 0
+zx vertex add input 1
+zx vertex add output 1
+zx vertex add input 2
+zx vertex add output 2
+zx vertex add input 3
+zx vertex add output 3
+zx vertex add input 4
+zx vertex add output 4
+
+zx vertex add z 0
+zx vertex add z 0
+zx vertex add z 0
+zx vertex add z 0
+
+zx vertex add input 5
+zx vertex add output 5
+zx vertex add input 6
+zx vertex add output 6
+
+zx edge add 0 1 SIMPLE
+zx edge add 2 10 SIMPLE
+zx edge add 3 11 SIMPLE
+zx edge add 4 12 SIMPLE
+zx edge add 5 12 SIMPLE
+zx edge add 6 12 SIMPLE
+zx edge add 7 13 SIMPLE
+zx edge add 8 13 SIMPLE
+zx edge add 9 13 SIMPLE
+zx edge add 14 16 SIMPLE
+zx edge add 15 17 SIMPLE
+
+logger trace
+zx2ts
+logger warn
+
+quit -f

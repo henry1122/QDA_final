@@ -1,0 +1,11 @@
+alias exit quit
+exi -h
+alias exir "qcir read"
+exi -h
+exir -h
+exit -h
+alias -d exir
+exit -h
+exir -h
+exi -h
+exit -f

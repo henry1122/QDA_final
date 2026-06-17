@@ -1,0 +1,11 @@
+zx read benchmark/zx/cnot.zx
+zx print -v 1 0
+zx print -v 1 0 d 9
+zx print -r 1 2
+zx read benchmark/zx/cnot.zx
+zx print -v
+zx
+zx read benchmark/zx/cnot.zx
+zx print -v
+zx print -e
+quit -f
