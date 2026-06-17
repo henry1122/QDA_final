@@ -298,6 +298,11 @@ int main(int argc, char** argv) {
         fmt::println("  --max-exp N         A* expansion cap (default: 100000)");
         fmt::println("  --no-todd           Skip full-circuit Todd comparison");
         fmt::println("  --joint-astar       Use joint A* on pairs (default: SSA merge, paper §3.3)");
+        fmt::println("  -- Search improvements (all ON by default) --");
+        fmt::println("  --no-canonical      Disable phase-column canonicalization in state key");
+        fmt::println("  --no-cutoff         Disable f-cutoff pruning (g+h2 >= best solution)");
+        fmt::println("  --max-cand N        Keep top-N active pairs by benefit (default: all)");
+        fmt::println("  --scale-budget      Scale A* budget proportional to SSA merged block size");
         return 1;
     }
 
@@ -325,6 +330,14 @@ int main(int argc, char** argv) {
             no_todd = true;
         } else if (arg == "--joint-astar") {
             cfg.multi_block_strategy = MultiBlockStrategy::joint_astar;
+        } else if (arg == "--no-canonical") {
+            cfg.canonical_state_key = false;
+        } else if (arg == "--no-cutoff") {
+            cfg.f_cutoff_prune = false;
+        } else if (arg == "--max-cand" && i + 1 < argc) {
+            cfg.max_candidates = std::stoul(argv[++i]);
+        } else if (arg == "--scale-budget") {
+            cfg.scale_budget_ssa = true;
         } else if (arg == "--benchmark-dir" && i + 1 < argc) {
             bench_dir = argv[++i];
         } else if (arg == "--output" && i + 1 < argc) {
@@ -380,9 +393,18 @@ int main(int argc, char** argv) {
 
     std::string const strategy_str =
         cfg.multi_block_strategy == MultiBlockStrategy::joint_astar ? "joint-astar" : "ssa-merge";
-    emit(fmt::format("Config: max_rz={} max_queue={} max_exp={} todd={} strategy={}",
-                     max_rz, cfg.max_queue_size, cfg.max_expansions,
-                     no_todd ? "off" : "on", strategy_str));
+    std::string const cand_str =
+        cfg.max_candidates == std::numeric_limits<size_t>::max()
+            ? "all" : std::to_string(cfg.max_candidates);
+    emit(fmt::format(
+        "Config: max_rz={} max_queue={} max_exp={} todd={} strategy={} "
+        "canonical={} cutoff={} max_cand={} scale_budget={}",
+        max_rz, cfg.max_queue_size, cfg.max_expansions,
+        no_todd ? "off" : "on", strategy_str,
+        cfg.canonical_state_key ? "on" : "off",
+        cfg.f_cutoff_prune      ? "on" : "off",
+        cand_str,
+        cfg.scale_budget_ssa    ? "on" : "off"));
     emit("");
 
     std::vector<CircuitResult> results;

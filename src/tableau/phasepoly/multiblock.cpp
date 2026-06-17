@@ -430,8 +430,23 @@ GroupResult synthesize_ssa_group(
 
     auto merged_opt = merge_blocks_ssa(blocks, boundaries, 0, blocks.size());
     if (merged_opt) {
-        auto const p  = phase_block_to_problem(*merged_opt);
-        auto const sr = synthesize_phasepoly(p, cfg);
+        auto const p = phase_block_to_problem(*merged_opt);
+
+        // Scale budget proportionally to the merged block's row count.
+        // The merged problem has more rows (n_logical + H_extras) and more
+        // phase columns (k blocks combined), so the same budget explores less.
+        PhasePolyConfig scaled_cfg = cfg;
+        if (cfg.scale_budget_ssa && blocks.size() > 1) {
+            size_t const orig_rows   = blocks[0].n_qubits();
+            size_t const merged_rows = merged_opt->n_qubits();
+            size_t const k           = blocks.size();
+            // Scale by max(k, merged/original) capped at 4× to avoid runaway.
+            size_t const row_scale   = (merged_rows + orig_rows - 1) / orig_rows;
+            size_t const scale       = std::min(std::max(k, row_scale), size_t{4});
+            scaled_cfg.max_expansions = cfg.max_expansions * scale;
+        }
+
+        auto const sr = synthesize_phasepoly(p, scaled_cfg);
         return GroupResult{sr.num_cx, sr.num_rz, sr.used_fallback};
     }
 
