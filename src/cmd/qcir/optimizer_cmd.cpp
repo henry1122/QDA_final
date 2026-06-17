@@ -7,6 +7,7 @@
 
 #include <spdlog/spdlog.h>
 
+#include <sstream>
 #include <string>
 
 #include "argparse/arg_type.hpp"
@@ -14,6 +15,8 @@
 #include "cmd/qcir_mgr.hpp"
 #include "qcir/optimizer/optimizer.hpp"
 #include "qcir/qcir.hpp"
+#include "tableau/phasepoly/config.hpp"
+#include "tableau/phasepoly/qcir_optimizer.hpp"
 #include "util/data_structure_manager_common_cmd.hpp"
 #include "util/dvlab_string.hpp"
 #include "util/phase.hpp"
@@ -40,7 +43,8 @@ Command qcir_optimize_cmd(QCirMgr& qcir_mgr) {
                     .constraint(choices_allow_prefix(
                         {"basic",
                          "teleport",
-                         "blaqsmith"}));
+                         "blaqsmith",
+                         "phasepoly"}));
 
                 parser.add_argument<double>("--init-temp")
                     .default_value(0.5)
@@ -62,6 +66,16 @@ Command qcir_optimize_cmd(QCirMgr& qcir_mgr) {
                     .default_value(false)
                     .action(store_true)
                     .help("Only perform optimizations preserving gate sets and qubit connectivities.");
+
+                parser.add_argument<size_t>("--max-queue")
+                    .default_value(10000)
+                    .help("PhasePoly: cap on the A* open set (default: 10000).");
+                parser.add_argument<size_t>("--max-expansions")
+                    .default_value(500000)
+                    .help("PhasePoly: hard cap on state expansions (default: 500000).");
+                parser.add_argument<std::string>("--group-size")
+                    .default_value("1,2,3,5")
+                    .help("PhasePoly: comma-separated adjacent block group sizes to try (default: 1,2,3,5).");
             },
             [&](ArgumentParser const& parser) {
                 if (!dvlab::utils::mgr_has_data(qcir_mgr)) return CmdExecResult::error;
@@ -72,7 +86,8 @@ Command qcir_optimize_cmd(QCirMgr& qcir_mgr) {
                 enum class Strategy {
                     basic,
                     teleport,
-                    blaqsmith
+                    blaqsmith,
+                    phasepoly
                 };
 
                 auto strategy = [&]() -> Strategy {
@@ -81,6 +96,9 @@ Command qcir_optimize_cmd(QCirMgr& qcir_mgr) {
                     }
                     if (dvlab::str::is_prefix_of(parser.get<std::string>("strategy"), "blaqsmith")) {
                         return Strategy::blaqsmith;
+                    }
+                    if (dvlab::str::is_prefix_of(parser.get<std::string>("strategy"), "phasepoly")) {
+                        return Strategy::phasepoly;
                     }
                     return Strategy::basic;
                 }();
@@ -94,6 +112,48 @@ Command qcir_optimize_cmd(QCirMgr& qcir_mgr) {
                         optimize_2q_count(*qcir_mgr.get(), parser.get<double>("--init-temp"), 2, 2);
                         procedure_str = "Blaqsmith";
                         break;
+                    case Strategy::phasepoly: {
+                        experimental::phasepoly::PhasePolyConfig config;
+                        config.max_queue_size  = parser.get<size_t>("--max-queue");
+                        config.max_expansions  = parser.get<size_t>("--max-expansions");
+
+                        config.group_sizes.clear();
+                        {
+                            std::stringstream ss(parser.get<std::string>("--group-size"));
+                            std::string token;
+                            while (std::getline(ss, token, ',')) {
+                                if (!token.empty()) {
+                                    config.group_sizes.push_back(std::stoull(token));
+                                }
+                            }
+                        }
+                        if (config.group_sizes.empty()) {
+                            config.group_sizes = {1, 2, 3, 5};
+                        }
+
+                        experimental::phasepoly::PhasePolyOptimizeStats stats{};
+                        result = experimental::phasepoly::optimize_qcir_phasepoly(
+                            *qcir_mgr.get(), config, true, &stats);
+
+                        if (!result) {
+                            spdlog::error("PhasePoly optimization failed.");
+                            return CmdExecResult::error;
+                        }
+
+                        spdlog::info(
+                            "PhasePoly: {} block(s), {} improved, CX {} -> {}",
+                            stats.num_blocks,
+                            stats.blocks_optimized,
+                            stats.cx_before,
+                            stats.cx_after);
+                        procedure_str = "PhasePolyOpt";
+                        if (parser.get<bool>("--copy")) {
+                            qcir_mgr.add(qcir_mgr.get_next_id(), std::make_unique<QCir>(std::move(*result)));
+                        } else {
+                            qcir_mgr.set(std::make_unique<QCir>(std::move(*result)));
+                        }
+                        break;
+                    }
                     case Strategy::basic: {
                         if (parser.get<bool>("--tech") || !qcir_mgr.get()->get_gate_set().empty()) {
                             result        = optimizer.trivial_optimization(*qcir_mgr.get());

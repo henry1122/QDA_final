@@ -1,0 +1,4 @@
+qcir read benchmark/qasm/spidernest_4_0.qasm
+qcir print --stat
+qcir optimize phasepoly
+qcir print --stat

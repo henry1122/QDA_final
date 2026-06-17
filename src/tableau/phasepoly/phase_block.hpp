@@ -68,6 +68,28 @@ public:
     size_t num_rz() const { return _num_rz; }
     bool empty() const { return _ops.empty(); }
 
+    /// @brief Build a block from an explicit operation list.
+    static PhaseBlock from_ops(size_t n_qubits, std::vector<PhaseOp> ops) {
+        PhaseBlock block{n_qubits};
+        for (auto const& op : ops) {
+            if (op.is_cx())
+                block.append_cx(op.control, op.target);
+            else
+                block.append_rz(op.qubit(), op.phase);
+        }
+        return block;
+    }
+
+    /// @brief Append another block's operations (same `n_qubits` required).
+    void append_block(PhaseBlock const& other) {
+        for (auto const& op : other.ops()) {
+            if (op.is_cx())
+                append_cx(op.control, op.target);
+            else
+                append_rz(op.qubit(), op.phase);
+        }
+    }
+
 private:
     size_t _n_qubits;
     std::vector<PhaseOp> _ops;

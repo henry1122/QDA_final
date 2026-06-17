@@ -25,7 +25,8 @@ std::optional<Operation> str_to_basic_operation(std::string str, std::vector<dvl
         if (str == "s") return SGate();
         if (str == "sdg") return SdgGate();
         if (str == "t") return TGate();
-        if (str == "tdg") return TdgGate();
+        if (str == "t*" || str == "tdg") return TdgGate();
+        if (str == "s*") return SdgGate();
 
         if (str == "x" || str == "not") return XGate();
         if (str == "sx" || str == "x_1_2") return SXGate();

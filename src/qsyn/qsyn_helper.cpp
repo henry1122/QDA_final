@@ -16,6 +16,7 @@
 #include "argparse/arg_parser.hpp"
 #include "argparse/arg_type.hpp"
 #include "cli/cli.hpp"
+#include "cmd/benchmark_cmd.hpp"
 #include "cmd/conversion_cmd.hpp"
 #include "cmd/device_cmd.hpp"
 #include "cmd/duostra_cmd.hpp"
@@ -137,6 +138,7 @@ bool initialize_qsyn(
            qsyn::qcir::add_qcir_cmds(cli, qcir_mgr) &&
            qsyn::tensor::add_tensor_cmds(cli, tensor_mgr) &&
            qsyn::zx::add_zx_cmds(cli, zxgraph_mgr) &&
+           qsyn::experimental::phasepoly::add_benchmark_cmds(cli) &&
            qsyn::experimental::add_tableau_command(cli, tableau_mgr);
 }
 

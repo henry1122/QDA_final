@@ -7,6 +7,7 @@
 
 #include "./extractor.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -20,6 +21,8 @@
 #include "qcir/qcir.hpp"
 #include "qcir/qcir_gate.hpp"
 #include "qsyn/qsyn_type.hpp"
+#include "tableau/pauli_rotation.hpp"
+#include "tableau/stabilizer_tableau.hpp"
 #include "util/phase.hpp"
 
 namespace qsyn::experimental::phasepoly {
@@ -126,6 +129,83 @@ std::vector<PhaseBlock> extract_phase_blocks(qcir::QCir const& circuit) {
     flush();
 
     return blocks;
+}
+
+PhasePolyProblem rotations_to_problem(
+    std::vector<PauliRotation> const& rotations,
+    ParityMatrix const& output_matrix) {
+    if (rotations.empty()) {
+        PhasePolyProblem problem;
+        problem.n_qubits      = output_matrix.n_rows();
+        problem.output_matrix = output_matrix;
+        return problem;
+    }
+
+    size_t const n = rotations.front().n_qubits();
+
+    std::vector<sul::dynamic_bitset<>> columns;
+    std::vector<dvlab::Phase> angles;
+    std::unordered_map<std::string, size_t> column_of_parity;
+
+    for (auto const& rotation : rotations) {
+        sul::dynamic_bitset<> parity(n);
+        for (size_t q = 0; q < n; ++q) {
+            if (rotation.is_z(q)) parity.set(q);
+        }
+        if (parity.count() == 0) continue;
+
+        auto const key = bits_key(parity);
+        if (auto const it = column_of_parity.find(key); it != column_of_parity.end()) {
+            angles[it->second] += rotation.phase();
+        } else {
+            column_of_parity.emplace(key, columns.size());
+            columns.push_back(std::move(parity));
+            angles.push_back(rotation.phase());
+        }
+    }
+
+    std::vector<sul::dynamic_bitset<>> kept_columns;
+    std::vector<dvlab::Phase> kept_angles;
+    for (size_t j = 0; j < columns.size(); ++j) {
+        if (angles[j] != dvlab::Phase()) {
+            kept_columns.push_back(std::move(columns[j]));
+            kept_angles.push_back(angles[j]);
+        }
+    }
+
+    PhasePolyProblem problem;
+    problem.n_qubits      = n;
+    problem.phase_matrix  = ParityMatrix::from_columns(n, kept_columns);
+    problem.phase_angles  = std::move(kept_angles);
+    problem.output_matrix = output_matrix;
+    return problem;
+}
+
+std::optional<ParityMatrix> output_matrix_from_stabilizer(
+    StabilizerTableau const& clifford,
+    StabilizerTableauSynthesisStrategy const& strategy) {
+    auto const ops = extract_clifford_operators(clifford, strategy);
+    SymbolicState state(clifford.n_qubits());
+    for (auto const& [type, qubits] : ops) {
+        if (type != CliffordOperatorType::cx) return std::nullopt;
+        apply_cnot_to_state(state, qubits[0], qubits[1]);
+    }
+    return state.to_output_matrix();
+}
+
+std::optional<PhasePolyProblem> tableau_block_to_problem(
+    StabilizerTableau const& clifford,
+    std::vector<PauliRotation> const& rotations,
+    StabilizerTableauSynthesisStrategy const& strategy) {
+    if (!rotations.empty() &&
+        !std::ranges::all_of(rotations, &PauliRotation::is_diagonal)) {
+        return std::nullopt;
+    }
+
+    auto const output = output_matrix_from_stabilizer(clifford, strategy);
+    if (!output) return std::nullopt;
+
+    return rotations_to_problem(rotations, *output);
 }
 
 }  // namespace qsyn::experimental::phasepoly

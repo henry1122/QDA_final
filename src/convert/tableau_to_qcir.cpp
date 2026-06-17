@@ -7,6 +7,7 @@
 
 #include "./tableau_to_qcir.hpp"
 
+#include <algorithm>
 #include <gsl/narrow>
 #include <random>
 #include <stack>
@@ -16,6 +17,9 @@
 
 #include "qcir/basic_gate_type.hpp"
 #include "qcir/qcir.hpp"
+#include "tableau/phasepoly/extractor.hpp"
+#include "tableau/phasepoly/search.hpp"
+#include "tableau/phasepoly/synthesizer.hpp"
 #include "util/graph/digraph.hpp"
 #include "util/graph/minimum_spanning_arborescence.hpp"
 #include "util/phase.hpp"
@@ -39,7 +43,9 @@ void add_clifford_gate(qcir::QCir& qcir, CliffordOperator const& op) {
             qcir.append(qcir::SGate(), {qubits[0]});
             break;
         case COT::cx:
-            qcir.append(qcir::CXGate(), {qubits[0], qubits[1]});
+            if (qubits[0] != qubits[1]) {
+                qcir.append(qcir::CXGate(), {qubits[0], qubits[1]});
+            }
             break;
         case COT::sdg:
             qcir.append(qcir::SdgGate(), {qubits[0]});
@@ -165,6 +171,7 @@ void apply_cxs(
     using Mode = GraySynthPauliRotationsSynthesisStrategy::Mode;
 
     auto const apply_cx = [&](size_t ctrl, size_t targ) {
+        if (ctrl == targ) return;
         for (auto col_id : std::views::iota(0ul, num_rotations)) {
             if (!frozen_rotations.contains(col_id)) {
                 rotations[col_id].cx(ctrl, targ);
@@ -460,6 +467,7 @@ MstSynthesisStrategy::synthesize(
     StabilizerTableau final_clifford{num_qubits};
 
     auto const add_cx = [&](size_t ctrl, size_t targ) {
+        if (ctrl == targ) return;
         for (auto& rot : copy_rotations) {
             rot.cx(ctrl, targ);
         }
@@ -535,6 +543,86 @@ MstSynthesisStrategy::synthesize(
     return qcir;
 }
 
+namespace {
+
+size_t count_cx_gates(qcir::QCir const& circuit) {
+    size_t count = 0;
+    for (auto const* gate : circuit.get_gates()) {
+        if (gate->get_operation().get_underlying_if<qcir::ControlGate>()) ++count;
+    }
+    return count;
+}
+
+}  // namespace
+
+std::optional<qcir::QCir> PhasePolySynthesisStrategy::synthesize(
+    std::vector<PauliRotation> const& rotations) const {
+    if (rotations.empty()) {
+        return qcir::QCir{0};
+    }
+
+    if (!std::ranges::all_of(rotations, &PauliRotation::is_diagonal)) {
+        spdlog::error("PhasePoly only supports diagonal rotations");
+        return std::nullopt;
+    }
+
+    auto const n       = rotations.front().n_qubits();
+    auto const problem = phasepoly::rotations_to_problem(rotations, phasepoly::ParityMatrix::identity(n));
+    if (problem.is_trivial()) {
+        return qcir::QCir{n};
+    }
+
+    auto const result = phasepoly::synthesize_phasepoly(problem, config);
+    if (!phasepoly::verify_synthesis(problem, result)) {
+        spdlog::error("PhasePoly synthesis failed symbolic verification");
+        return std::nullopt;
+    }
+
+    if (replace_only_if_better) {
+        auto const baseline = MstSynthesisStrategy{}.synthesize(rotations);
+        if (baseline && count_cx_gates(*baseline) <= result.num_cx) {
+            return baseline;
+        }
+    }
+
+    return phasepoly::build_qcir(result.n_qubits, result.gates);
+}
+
+std::optional<qcir::QCir> synthesize_cooptimized_block(
+    StabilizerTableau const& clifford_prefix,
+    std::vector<PauliRotation> const& rotations,
+    PhasePolySynthesisStrategy const& strategy,
+    StabilizerTableauSynthesisStrategy const& st_strategy) {
+    auto const problem = phasepoly::tableau_block_to_problem(clifford_prefix, rotations, st_strategy);
+    if (!problem) return std::nullopt;
+
+    if (problem->is_trivial()) {
+        return to_qcir(clifford_prefix, st_strategy);
+    }
+
+    auto const result = phasepoly::synthesize_phasepoly(*problem, strategy.config);
+    if (!phasepoly::verify_synthesis(*problem, result)) {
+        spdlog::warn("PhasePoly co-optimization failed verification; falling back");
+        return std::nullopt;
+    }
+
+    if (strategy.replace_only_if_better) {
+        auto const prefix_circ = to_qcir(clifford_prefix, st_strategy);
+        auto const rot_circ    = MstSynthesisStrategy{}.synthesize(rotations);
+        if (prefix_circ && rot_circ) {
+            size_t const baseline_cx = count_cx_gates(*prefix_circ) + count_cx_gates(*rot_circ);
+            if (baseline_cx <= result.num_cx) {
+                qcir::QCir combined{clifford_prefix.n_qubits()};
+                combined.compose(*prefix_circ);
+                combined.compose(*rot_circ);
+                return combined;
+            }
+        }
+    }
+
+    return phasepoly::build_qcir(result.n_qubits, result.gates);
+}
+
 /**
  * @brief convert a Pauli rotation to a QCir. This is a naive implementation.
  *
@@ -557,16 +645,32 @@ std::optional<qcir::QCir> to_qcir(
 std::optional<qcir::QCir> to_qcir(Tableau const& tableau, StabilizerTableauSynthesisStrategy const& st_strategy, PauliRotationsSynthesisStrategy const& pr_strategy) {
     qcir::QCir qcir{tableau.n_qubits()};
 
-    for (auto const& subtableau : tableau) {
+    auto const* phasepoly_strategy = dynamic_cast<PhasePolySynthesisStrategy const*>(&pr_strategy);
+
+    for (size_t i = 0; i < tableau.size(); ++i) {
         if (stop_requested()) {
             return std::nullopt;
         }
+
+        if (phasepoly_strategy != nullptr &&
+            std::holds_alternative<StabilizerTableau>(tableau[i]) &&
+            i + 1 < tableau.size() &&
+            std::holds_alternative<std::vector<PauliRotation>>(tableau[i + 1])) {
+            auto const& clifford  = std::get<StabilizerTableau>(tableau[i]);
+            auto const& rotations = std::get<std::vector<PauliRotation>>(tableau[i + 1]);
+            if (auto coopt = synthesize_cooptimized_block(clifford, rotations, *phasepoly_strategy, st_strategy)) {
+                qcir.compose(*coopt);
+                ++i;
+                continue;
+            }
+        }
+
         auto const qc_fragment =
             std::visit(
                 dvlab::overloaded{
                     [&st_strategy](StabilizerTableau const& st) { return to_qcir(st, st_strategy); },
                     [&pr_strategy](std::vector<PauliRotation> const& pr) { return to_qcir(pr, pr_strategy); }},
-                subtableau);
+                tableau[i]);
         if (!qc_fragment) {
             return std::nullopt;
         }

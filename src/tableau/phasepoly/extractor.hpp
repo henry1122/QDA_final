@@ -12,6 +12,12 @@
 #include "./phase_block.hpp"
 #include "./phase_poly_problem.hpp"
 
+namespace qsyn::experimental {
+class PauliRotation;
+class StabilizerTableau;
+class StabilizerTableauSynthesisStrategy;
+}  // namespace qsyn::experimental
+
 namespace qsyn::qcir {
 class QCir;
 }
@@ -38,5 +44,35 @@ PhasePolyProblem phase_block_to_problem(PhaseBlock const& block);
  * `n` qubits of the circuit so qubit ids map directly to matrix rows.
  */
 std::vector<PhaseBlock> extract_phase_blocks(qcir::QCir const& circuit);
+
+/**
+ * @brief Build `(P, Theta, O)` from a diagonal Pauli-rotation block.
+ *
+ * Phase columns are the Z-supports of each rotation (with angle normalization).
+ * `output_matrix` defaults to identity when the block has no CNOT prefix.
+ */
+PhasePolyProblem rotations_to_problem(
+    std::vector<PauliRotation> const& rotations,
+    ParityMatrix const& output_matrix);
+
+/**
+ * @brief Derive the output basis `O` from a CNOT-only stabilizer prefix.
+ *
+ * Returns `nullopt` when the decomposed Clifford string contains non-CNOT gates.
+ */
+std::optional<ParityMatrix> output_matrix_from_stabilizer(
+    StabilizerTableau const& clifford,
+    StabilizerTableauSynthesisStrategy const& strategy);
+
+/**
+ * @brief Co-extract a tableau segment `[StabilizerTableau | PauliRotations]`.
+ *
+ * Returns `nullopt` when the stabilizer prefix is not CNOT-only or the
+ * rotations are not diagonal.
+ */
+std::optional<PhasePolyProblem> tableau_block_to_problem(
+    StabilizerTableau const& clifford,
+    std::vector<PauliRotation> const& rotations,
+    StabilizerTableauSynthesisStrategy const& strategy);
 
 }  // namespace qsyn::experimental::phasepoly

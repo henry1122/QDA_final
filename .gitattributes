@@ -1,2 +1,5 @@
-benchmark/** linguist-vendored
-
+# Shell scripts must use LF line endings (required for Docker/Linux)
+*.sh text eol=lf
+docker/** text eol=lf
+scripts/RUN_TESTS text eol=lf
+scripts/RUN_TESTS_DOCKER text eol=lf

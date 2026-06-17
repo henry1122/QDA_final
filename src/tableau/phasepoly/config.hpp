@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstddef>
+#include <vector>
 
 #include "./gaussian.hpp"
 
@@ -28,6 +29,13 @@ struct PhasePolyConfig {
     LinearSynthesisMode finish_mode = LinearSynthesisMode::patel_markov_hayes;
     /// Strategy used for the per-state `h2` estimate (kept cheap for speed).
     LinearSynthesisMode h2_mode = LinearSynthesisMode::gauss_jordan;
+
+    /// Adjacent phase-poly block group sizes to try (paper §3.3; Stage 5).
+    /// The optimizer keeps the cheapest result across all sizes.
+    std::vector<size_t> group_sizes = {1, 2, 3, 5};
+
+    /// Apply Todd phase-polynomial optimization to each phase block before synthesis.
+    bool apply_block_todd = true;
 };
 
 }  // namespace qsyn::experimental::phasepoly

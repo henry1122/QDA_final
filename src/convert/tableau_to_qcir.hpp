@@ -9,6 +9,7 @@
 
 #include "qcir/qcir.hpp"
 #include "tableau/pauli_rotation.hpp"
+#include "tableau/phasepoly/config.hpp"
 #include "tableau/tableau.hpp"
 
 namespace qsyn {
@@ -47,6 +48,26 @@ struct GraySynthPauliRotationsSynthesisStrategy : public PauliRotationsSynthesis
 struct MstSynthesisStrategy : public PauliRotationsSynthesisStrategy {
     std::optional<qcir::QCir> synthesize(std::vector<PauliRotation> const& rotations) const override;
 };
+
+/**
+ * @brief Synthesize Pauli rotations with PhasePoly co-optimization (paper §3).
+ *
+ * When paired with a preceding CNOT-only stabilizer block in `to_qcir(Tableau)`,
+ * the joint `[P | O]` search is used; otherwise rotations are synthesized with
+ * `O = I`.
+ */
+struct PhasePolySynthesisStrategy : public PauliRotationsSynthesisStrategy {
+    phasepoly::PhasePolyConfig config;
+    bool replace_only_if_better = true;
+
+    std::optional<qcir::QCir> synthesize(std::vector<PauliRotation> const& rotations) const override;
+};
+
+std::optional<qcir::QCir> synthesize_cooptimized_block(
+    StabilizerTableau const& clifford_prefix,
+    std::vector<PauliRotation> const& rotations,
+    PhasePolySynthesisStrategy const& strategy,
+    StabilizerTableauSynthesisStrategy const& st_strategy);
 
 std::optional<qcir::QCir> to_qcir(
     StabilizerTableau const& clifford,

@@ -11,6 +11,7 @@
 
 #include "qcir/basic_gate_type.hpp"
 #include "qcir/qcir.hpp"
+#include "tableau/pauli_rotation.hpp"
 #include "tableau/phasepoly/extractor.hpp"
 #include "tableau/phasepoly/parity_matrix.hpp"
 #include "tableau/phasepoly/phase_block.hpp"
@@ -18,6 +19,7 @@
 #include "util/phase.hpp"
 
 using namespace qsyn;
+using namespace qsyn::experimental;
 using namespace qsyn::qcir;
 using namespace qsyn::experimental::phasepoly;
 using dvlab::Phase;
@@ -147,4 +149,19 @@ TEST_CASE("extract_phase_blocks reads CX control/target and Rz correctly", "[pha
     CHECK(problem.num_phase_terms() == 1);
     CHECK(problem.phase_matrix == ParityMatrix::from_rows({{1}, {1}, {1}}));
     CHECK(problem.phase_angles == std::vector<Phase>{Phase(1, 4)});
+}
+
+TEST_CASE("rotations_to_problem extracts diagonal Pauli rotations", "[phasepoly]") {
+    std::vector<PauliRotation> rotations{
+        PauliRotation({Pauli::z, Pauli::z, Pauli::i}, Phase(1, 2)),
+        PauliRotation({Pauli::i, Pauli::z, Pauli::z}, Phase(1, 4)),
+    };
+
+    auto const problem = rotations_to_problem(rotations, ParityMatrix::identity(3));
+    CHECK(problem.num_phase_terms() == 2);
+    CHECK(problem.phase_matrix == ParityMatrix::from_rows({{1, 0},
+                                                           {1, 1},
+                                                           {0, 1}}));
+    CHECK(problem.phase_angles == std::vector<Phase>{Phase(1, 2), Phase(1, 4)});
+    CHECK(problem.output_matrix == ParityMatrix::identity(3));
 }

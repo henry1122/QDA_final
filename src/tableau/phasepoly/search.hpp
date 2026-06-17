@@ -52,4 +52,8 @@ struct SynthesisResult {
 SynthesisResult synthesize_phasepoly(PhasePolyProblem const& problem,
                                      PhasePolyConfig const& config = {});
 
+/// @brief Greedy canonical synthesis (used to rebuild a `PhaseBlock` after Todd).
+SynthesisResult greedy_synthesize_problem(PhasePolyProblem const& problem,
+                                            PhasePolyConfig const& config = {});
+
 }  // namespace qsyn::experimental::phasepoly

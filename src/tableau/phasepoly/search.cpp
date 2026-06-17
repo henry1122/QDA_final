@@ -153,6 +153,10 @@ SynthesisResult to_result(SearchState const& s, PhasePolyProblem const& problem)
 
 }  // namespace
 
+SynthesisResult greedy_synthesize_problem(PhasePolyProblem const& problem, PhasePolyConfig const& config) {
+    return to_result(greedy_synthesize(problem, config.finish_mode), problem);
+}
+
 SynthesisResult synthesize_phasepoly(PhasePolyProblem const& problem, PhasePolyConfig const& config) {
     using Priority = std::tuple<size_t, size_t, size_t, size_t, uint64_t>;  // f, h1, h2, (max-g), counter
 

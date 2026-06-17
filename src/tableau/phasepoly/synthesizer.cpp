@@ -44,6 +44,7 @@ qcir::QCir build_qcir(size_t n_qubits, std::vector<PhaseOp> const& gates) {
     qcir::QCir circuit{n_qubits};
     for (auto const& op : gates) {
         if (op.is_cx()) {
+            if (op.control == op.target) continue;
             circuit.append(qcir::CXGate(), QubitIdList{op.control, op.target});
         } else {
             circuit.append(qcir::PZGate(op.phase), QubitIdList{op.qubit()});
