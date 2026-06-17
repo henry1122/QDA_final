@@ -13,6 +13,14 @@
 
 namespace qsyn::experimental::phasepoly {
 
+/// Multi-block synthesis strategy (used by `synthesize_block_group`).
+enum class MultiBlockStrategy {
+    /// SSA rename → merge all k blocks → single A* (paper §3.3, default).
+    ssa_merge,
+    /// Joint A* on consecutive pairs — experimental cross-block alternative.
+    joint_astar,
+};
+
 /**
  * @brief Tunables for `synthesize_phasepoly` (paper §3.2).
  */
@@ -28,6 +36,9 @@ struct PhasePolyConfig {
     LinearSynthesisMode finish_mode = LinearSynthesisMode::patel_markov_hayes;
     /// Strategy used for the per-state `h2` estimate (kept cheap for speed).
     LinearSynthesisMode h2_mode = LinearSynthesisMode::gauss_jordan;
+
+    /// Strategy for multi-block synthesis (k > 1 groups).
+    MultiBlockStrategy multi_block_strategy = MultiBlockStrategy::ssa_merge;
 };
 
 }  // namespace qsyn::experimental::phasepoly

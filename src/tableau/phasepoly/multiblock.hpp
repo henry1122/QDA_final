@@ -14,10 +14,10 @@
 
 namespace qsyn::experimental::phasepoly {
 
-/// Boundary between two consecutive phase blocks: which qubits have H gates.
-/// Non-H boundary gates (CZ, etc.) don't reset parity so they're not recorded.
+/// Boundary between two consecutive phase blocks.
 struct BlockBoundary {
     std::vector<size_t> h_qubits;  ///< qubits with H gate at this boundary
+    bool has_non_h_gate = false;   ///< true if any non-H gate appears here (blocks SSA merge)
 };
 
 /// Result of extract_phase_blocks_with_boundaries
@@ -29,7 +29,8 @@ struct ExtractedCircuit {
 
 /// Result of synthesizing a group of k consecutive blocks
 struct GroupResult {
-    size_t num_cx = 0;
+    size_t num_cx  = 0;
+    size_t num_rz  = 0;  ///< Rz gates in the synthesis output (may be < input Rz after SSA merging)
     bool used_fallback = false;
 };
 
@@ -55,10 +56,10 @@ GroupResult synthesize_block_group(
 
 /**
  * @brief Partition all blocks into non-overlapping groups of size k and
- *        synthesize each group with warm-start reuse. Returns total CX.
+ *        synthesize each group. Returns total CX and Rz across all groups.
  */
-size_t synthesize_grouped(ExtractedCircuit const& extracted,
-                          size_t group_size,
-                          PhasePolyConfig const& cfg);
+GroupResult synthesize_grouped(ExtractedCircuit const& extracted,
+                               size_t group_size,
+                               PhasePolyConfig const& cfg);
 
 }  // namespace qsyn::experimental::phasepoly

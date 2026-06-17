@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -226,9 +227,11 @@ GroupResult synthesize_joint(PhasePolyProblem const& p0,
                 Q.set(j, c, p0.output_matrix.get(j, c));
         if (!gf2_is_invertible(Q)) {
             // H-boundary singularity: joint A* is infeasible; synthesize independently.
+            auto const sr0 = synthesize_phasepoly(p0, cfg);
+            auto const sr1 = synthesize_phasepoly(p1, cfg);
             GroupResult r;
-            r.num_cx        = synthesize_phasepoly(p0, cfg).num_cx +
-                              synthesize_phasepoly(p1, cfg).num_cx;
+            r.num_cx        = sr0.num_cx + sr1.num_cx;
+            r.num_rz        = sr0.num_rz + sr1.num_rz;
             r.used_fallback = true;
             return r;
         }
@@ -326,9 +329,11 @@ GroupResult synthesize_joint(PhasePolyProblem const& p0,
 
     if (solutions.empty()) {
         // Budget exhausted without finding any solution: fall back to independent.
+        auto const sr0 = synthesize_phasepoly(p0, cfg);
+        auto const sr1 = synthesize_phasepoly(p1, cfg);
         GroupResult r;
-        r.num_cx     = synthesize_phasepoly(p0, cfg).num_cx +
-                       synthesize_phasepoly(p1, cfg).num_cx;
+        r.num_cx        = sr0.num_cx + sr1.num_cx;
+        r.num_rz        = sr0.num_rz + sr1.num_rz;
         r.used_fallback = true;
         return r;
     }
@@ -337,7 +342,110 @@ GroupResult synthesize_joint(PhasePolyProblem const& p0,
     for (auto const& sol : solutions)
         if (sol.g_cost < best->g_cost) best = &sol;
 
-    return GroupResult{best->g_cost, false};
+    size_t rz_count = 0;
+    for (auto const& op : best->gates)
+        if (op.is_rz()) ++rz_count;
+
+    return GroupResult{best->g_cost, rz_count, false};
+}
+
+// ─── SSA rename → merge → single A* (paper §3.3) ──────────────────────────
+
+/// Tracks qubit → SSA row mapping. Each H gate on a qubit allocates a fresh row.
+class SSAContext {
+public:
+    explicit SSAContext(size_t n_logical) : _row_map(n_logical) {
+        std::iota(_row_map.begin(), _row_map.end(), 0);
+        _row_to_logical.resize(n_logical);
+        std::iota(_row_to_logical.begin(), _row_to_logical.end(), 0);
+    }
+
+    size_t num_rows() const { return _row_to_logical.size(); }
+    size_t remap(size_t logical_q) const { return _row_map.at(logical_q); }
+
+    void h_gate(size_t logical_q) {
+        _row_to_logical.push_back(logical_q);
+        _row_map.at(logical_q) = _row_to_logical.size() - 1;
+    }
+
+private:
+    std::vector<size_t> _row_map;
+    std::vector<size_t> _row_to_logical;
+};
+
+/// Merge k consecutive blocks (blocks[start..start+k-1]) into a single PhaseBlock
+/// using SSA renaming at H-boundaries. Returns nullopt if any boundary contains
+/// a non-H gate (unsafe to merge) or the index range is out of bounds.
+std::optional<PhaseBlock> merge_blocks_ssa(
+    std::vector<PhaseBlock> const& blocks,
+    std::vector<BlockBoundary> const& boundaries,
+    size_t start,
+    size_t k) {
+    if (k == 0 || start + k > blocks.size()) return std::nullopt;
+    if (k == 1) return blocks[start];
+
+    size_t const n_logical = blocks[start].n_qubits();
+    SSAContext ctx{n_logical};
+    std::vector<PhaseOp> ops;
+
+    auto append_remapped = [&](PhaseBlock const& block) {
+        for (auto const& op : block.ops()) {
+            if (op.is_cx())
+                ops.push_back(PhaseOp::make_cx(ctx.remap(op.control), ctx.remap(op.target)));
+            else
+                ops.push_back(PhaseOp::make_rz(ctx.remap(op.qubit()), op.phase));
+        }
+    };
+
+    append_remapped(blocks[start]);
+
+    for (size_t j = 0; j + 1 < k; ++j) {
+        size_t const bnd_idx = start + j;
+        if (bnd_idx >= boundaries.size()) return std::nullopt;
+        BlockBoundary const& bnd = boundaries[bnd_idx];
+        if (bnd.has_non_h_gate) return std::nullopt;
+
+        for (size_t h_qubit : bnd.h_qubits)
+            ctx.h_gate(h_qubit);
+
+        append_remapped(blocks[start + j + 1]);
+    }
+
+    PhaseBlock merged{ctx.num_rows()};
+    for (auto const& op : ops) {
+        if (op.is_cx()) merged.append_cx(op.control, op.target);
+        else            merged.append_rz(op.qubit(), op.phase);
+    }
+    return merged;
+}
+
+/// Synthesize a group of k consecutive blocks by merging them via SSA renaming
+/// and running a single A* on the merged problem. Falls back to per-block
+/// independent synthesis if SSA merge is infeasible (non-H boundary gate).
+GroupResult synthesize_ssa_group(
+    std::vector<PhaseBlock> const& blocks,
+    std::vector<BlockBoundary> const& boundaries,
+    PhasePolyConfig const& cfg) {
+    if (blocks.empty()) return {};
+
+    auto merged_opt = merge_blocks_ssa(blocks, boundaries, 0, blocks.size());
+    if (merged_opt) {
+        auto const p  = phase_block_to_problem(*merged_opt);
+        auto const sr = synthesize_phasepoly(p, cfg);
+        return GroupResult{sr.num_cx, sr.num_rz, sr.used_fallback};
+    }
+
+    // Non-H boundary prevents SSA merge: fall back to independent per-block A*.
+    GroupResult result;
+    result.used_fallback = true;
+    for (auto const& block : blocks) {
+        auto const p  = phase_block_to_problem(block);
+        auto const sr = synthesize_phasepoly(p, cfg);
+        result.num_cx += sr.num_cx;
+        result.num_rz += sr.num_rz;
+        if (sr.used_fallback) result.used_fallback = true;
+    }
+    return result;
 }
 
 }  // namespace
@@ -351,13 +459,16 @@ ExtractedCircuit extract_phase_blocks_with_boundaries(qcir::QCir const& circuit)
 
     PhaseBlock current(n);
     std::vector<size_t> pending_h_qubits;
-    bool has_flushed = false;
+    bool pending_has_non_h = false;
+    bool has_flushed       = false;
 
     auto flush = [&]() {
         if (!current.empty()) {
             if (has_flushed) {
-                result.boundaries.push_back(BlockBoundary{pending_h_qubits});
+                result.boundaries.push_back(
+                    BlockBoundary{pending_h_qubits, pending_has_non_h});
                 pending_h_qubits.clear();
+                pending_has_non_h = false;
             }
             result.blocks.push_back(std::move(current));
             current     = PhaseBlock(n);
@@ -376,6 +487,8 @@ ExtractedCircuit extract_phase_blocks_with_boundaries(qcir::QCir const& circuit)
             flush();
             if (is_h_gate(op))
                 pending_h_qubits.push_back(static_cast<size_t>(qubits[0]));
+            else
+                pending_has_non_h = true;
         }
     }
     flush();
@@ -383,31 +496,33 @@ ExtractedCircuit extract_phase_blocks_with_boundaries(qcir::QCir const& circuit)
     return result;
 }
 
-/// Synthesize a group of consecutive blocks using joint A* on consecutive pairs.
+/// Synthesize a group of consecutive blocks using the strategy in `cfg`.
 ///
-/// For a group of k blocks [B0, B1, B2, B3, ...]:
-///   - Pairs (B0,B1), (B2,B3), ... are synthesized jointly: a single CNOT can
-///     simultaneously reduce parity columns from both blocks, sharing the gate cost.
-///   - A trailing singleton (if k is odd) is synthesized independently.
+/// SSA merge (default, paper §3.3):
+///   All k blocks are SSA-renamed and merged into a single problem, then solved
+///   by one A* call. Falls back to per-block independent synthesis if any
+///   boundary contains a non-H gate.
 ///
-/// `synthesize_grouped` partitions the global block list into non-overlapping
-/// groups of `group_size` and calls this function for each group, so:
-///   group_size=1 → per-block independent A* (same as Stage 4)
-///   group_size=2 → all pairs jointly synthesized
-///   group_size=3 → triples: first pair jointly, third block independently
-///   group_size=5 → quintuples: two pairs jointly, fifth block independently
+/// Joint A* (experimental):
+///   Consecutive pairs (B0,B1), (B2,B3), ... are synthesized jointly; a single
+///   CNOT can reduce parities from both blocks simultaneously. A trailing
+///   singleton (odd k) is synthesized independently.
 GroupResult synthesize_block_group(
     std::vector<PhaseBlock> const& blocks,
     std::vector<BlockBoundary> const& boundaries,
     PhasePolyConfig const& cfg) {
     if (blocks.empty()) return {};
 
+    if (cfg.multi_block_strategy == MultiBlockStrategy::ssa_merge) {
+        return synthesize_ssa_group(blocks, boundaries, cfg);
+    }
+
+    // ── Joint A* on consecutive pairs ─────────────────────────────────────
     GroupResult result;
 
     for (size_t i = 0; i + 1 < blocks.size(); i += 2) {
         auto const p0 = phase_block_to_problem(blocks[i]);
         auto const p1 = phase_block_to_problem(blocks[i + 1]);
-        // boundaries[i] = boundary between blocks[i] and blocks[i+1]
         BlockBoundary const& bnd =
             (i < boundaries.size()) ? boundaries[i] : BlockBoundary{};
         auto const gr = synthesize_joint(p0, p1, bnd.h_qubits, cfg);
@@ -420,21 +535,22 @@ GroupResult synthesize_block_group(
         auto const p  = phase_block_to_problem(blocks.back());
         auto const sr = synthesize_phasepoly(p, cfg);
         result.num_cx += sr.num_cx;
+        result.num_rz += sr.num_rz;
         if (sr.used_fallback) result.used_fallback = true;
     }
 
     return result;
 }
 
-size_t synthesize_grouped(ExtractedCircuit const& extracted,
-                          size_t group_size,
-                          PhasePolyConfig const& cfg) {
+GroupResult synthesize_grouped(ExtractedCircuit const& extracted,
+                               size_t group_size,
+                               PhasePolyConfig const& cfg) {
     if (group_size == 0) group_size = 1;
 
     auto const& blocks     = extracted.blocks;
     auto const& boundaries = extracted.boundaries;
     size_t const nb        = blocks.size();
-    size_t total_cx        = 0;
+    GroupResult total;
 
     for (size_t start = 0; start < nb; start += group_size) {
         size_t const end = std::min(start + group_size, nb);
@@ -451,10 +567,12 @@ size_t synthesize_grouped(ExtractedCircuit const& extracted,
         }
 
         auto const gr = synthesize_block_group(group_blocks, group_boundaries, cfg);
-        total_cx += gr.num_cx;
+        total.num_cx += gr.num_cx;
+        total.num_rz += gr.num_rz;
+        if (gr.used_fallback) total.used_fallback = true;
     }
 
-    return total_cx;
+    return total;
 }
 
 }  // namespace qsyn::experimental::phasepoly

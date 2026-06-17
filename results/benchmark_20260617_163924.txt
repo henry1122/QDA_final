@@ -1,0 +1,25 @@
+Config: max_rz=30 max_queue=5000 max_exp=100000 todd=off strategy=ssa-merge
+
+circuit                         q  blk    original       pp(1)       pp(2)       pp(3)       pp(5)       mst+P      gray+P  todd+naive
+                                            CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot
+--------------------------------------------------------------------------------------------------------------------------------------
+grover_5                       10    0         0/0         0/0         0/0         0/0         0/0         0/0         0/0         n/a
+ham15-low                      17   19       98/98     125/125     126/126     125/125     125/125     125/125     125/125         n/a
+ham15-med                      17    9       42/42       59/59       57/57       74/74       74/74       59/59       59/59         n/a
+ham15-high                     20   11       43/43       57/57       63/63       60/60       57/57       57/57       57/57         n/a
+hwb6                            7   15       26/26       28/28       28/28       28/28       28/28       28/28       28/28         n/a
+qft_4                         (read failed)
+--------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                           -    -     209/209     269/269     274/274     287/287     284/284     269/269     269/269         n/a
+
+Notes:
+  Each cell: CX/total where total = CX + Rz (paper Table 1 format).
+  original  = input circuit gate counts (before any PhasePoly optimization).
+  pp(k)     = PhasePoly A* (ssa-merge) multi-block synthesis:
+              k=1: per-block independent A*
+              k>1: groups of k blocks SSA-merged into one problem, solved by single A*.
+              Use --joint-astar to switch to the experimental joint A* strategy.
+  mst+P / gray+P = block-level synthesis + PMH output-matrix pass (Rz = input Rz).
+  todd+naive = full-circuit Todd T-count opt + naive rotation synthesis.
+  * = PhasePoly A* skipped for blocks with > 30 Rz terms; MST used.
+Output saved to: results/benchmark_20260617_163924.txt

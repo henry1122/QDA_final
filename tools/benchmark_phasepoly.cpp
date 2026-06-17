@@ -17,8 +17,8 @@
   For each .qc circuit the tool runs synthesis methods on the same input:
 
   Block-level methods (per CNOT+Rz block):
-    pp(k)       PhasePoly A*    warm-start group synthesis (k=group size)
-                k=1: per-block independent; k>1: cross-block parity reuse
+    pp(k)       PhasePoly A*    SSA-merge group synthesis (k=group size, paper §3.3)
+                k=1: per-block independent; k>1: SSA-merged group → single A*
     mst+P       MST             Vandaele MST on P, then PMH(O)
     gstair+P    GStair          GraySynth(staircase) on P + PMH(O)
     gray+P      GraySynth       GraySynth(star) on P + PMH(O)
@@ -39,7 +39,9 @@ bool stop_requested() { return false; }
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <vector>
@@ -68,6 +70,31 @@ using namespace qsyn::experimental;
 using namespace qsyn::experimental::phasepoly;
 
 // ---------------------------------------------------------------------------
+// Predefined circuit sets
+// ---------------------------------------------------------------------------
+
+// Table 1 from Chen et al. 2025 (19 circuits).
+static std::vector<std::string> const TABLE1_CIRCUITS = {
+    "tof_3_pyzx", "tof_4_pyzx", "tof_5_pyzx", "tof_10_pyzx",
+    "barenco_tof_3_pyzx", "barenco_tof_4_pyzx", "barenco_tof_5_pyzx", "barenco_tof_10_pyzx",
+    "grover_5_pyzx",
+    "ham15-low_pyzx", "ham15-med_pyzx", "ham15-high_pyzx",
+    "mod5_4_pyzx", "mod_mult_55_pyzx", "mod_red_21_pyzx",
+    "qcla_com_7_pyzx", "qcla_mod_7_pyzx",
+    "rc_adder_6_pyzx", "vbe_adder_3_pyzx",
+};
+
+// Extended set: Table 1 + 9 more (28 circuits total).
+static std::vector<std::string> const EXTENDED_EXTRA_CIRCUITS = {
+    "Adder8_pyzx", "adder_8_pyzx",
+    "csla_mux_3_original_pyzx", "csum_mux_9_corrected_pyzx",
+    "hwb6_pyzx",
+    "mod_adder_1024_pyzx",
+    "nth_prime6_pyzx", "qcla_adder_10_pyzx",
+    "qft_4_pyzx",
+};
+
+// ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
 
@@ -75,6 +102,16 @@ static size_t count_cx(QCir const& qcir) {
     size_t n = 0;
     for (auto* g : qcir.get_gates())
         if (g->get_operation() == CXGate()) ++n;
+    return n;
+}
+
+static size_t count_rz(QCir const& qcir) {
+    size_t n = 0;
+    for (auto* g : qcir.get_gates()) {
+        auto const& op = g->get_operation();
+        if (op.get_underlying_if<qcir::PZGate>() ||
+            op.get_underlying_if<qcir::RZGate>()) ++n;
+    }
     return n;
 }
 
@@ -103,6 +140,7 @@ static constexpr size_t FAIL = SIZE_MAX / 2;
 struct BlockResult {
     size_t rz;
     size_t cx_phasepoly;
+    size_t rz_phasepoly;  // Rz from A* result (may differ from input rz after SSA cancellation)
     size_t cx_mst;
     size_t cx_gstair;
     size_t cx_gray;
@@ -117,17 +155,21 @@ static BlockResult benchmark_block(PhasePolyProblem const& problem,
         problem.output_matrix, LinearSynthesisMode::patel_markov_hayes);
 
     // PhasePoly A* — skip if block is too large (avoids OOM)
-    size_t cx_pp = 0;
+    size_t cx_pp = 0, rz_pp = 0;
     if (m == 0) {
         cx_pp = pmh_o;
+        rz_pp = 0;
     } else if (m > max_rz) {
-        cx_pp = FAIL;  // too large; marked as n/a
+        cx_pp = FAIL;
+        rz_pp = FAIL;
     } else {
-        cx_pp = synthesize_phasepoly(problem, cfg).num_cx;
+        auto const sr = synthesize_phasepoly(problem, cfg);
+        cx_pp = sr.num_cx;
+        rz_pp = sr.num_rz;
     }
 
     if (m == 0) {
-        return {m, cx_pp, pmh_o, pmh_o, pmh_o, pmh_o};
+        return {m, cx_pp, rz_pp, pmh_o, pmh_o, pmh_o, pmh_o};
     }
 
     auto const rotations = problem_to_pauli_rotations(problem);
@@ -143,7 +185,7 @@ static BlockResult benchmark_block(PhasePolyProblem const& problem,
     size_t cx_gray   = run_strategy(GraySynthPauliRotationsSynthesisStrategy{});
     size_t cx_naive  = run_strategy(NaivePauliRotationsSynthesisStrategy{});
 
-    return {m, cx_pp, cx_mst, cx_gstair, cx_gray, cx_naive};
+    return {m, cx_pp, rz_pp, cx_mst, cx_gstair, cx_gray, cx_naive};
 }
 
 // ---------------------------------------------------------------------------
@@ -154,17 +196,26 @@ struct CircuitResult {
     std::string name;
     size_t n_qubits        = 0;
     size_t n_blocks        = 0;
-    size_t total_rz        = 0;
-    size_t cx_pp_k1        = 0;   // PhasePoly A* k=1 (per-block independent)
-    size_t cx_pp_k2        = 0;   // PhasePoly A* k=2 warm-start groups
-    size_t cx_pp_k3        = 0;   // PhasePoly A* k=3 warm-start groups
-    size_t cx_pp_k5        = 0;   // PhasePoly A* k=5 warm-start groups
+    size_t orig_cx         = 0;   // CX count of the original input circuit
+    size_t orig_rz         = 0;   // Rz count of the original input circuit
+    size_t input_rz        = 0;   // total Rz in input phase blocks
+    // PhasePoly A* — both CX and Rz from synthesis output
+    size_t cx_pp_k1        = 0;
+    size_t rz_pp_k1        = 0;
+    size_t cx_pp_k2        = 0;
+    size_t rz_pp_k2        = 0;
+    size_t cx_pp_k3        = 0;
+    size_t rz_pp_k3        = 0;
+    size_t cx_pp_k5        = 0;
+    size_t rz_pp_k5        = 0;
+    // Reference methods: CX only (Rz = input_rz, same for all)
     size_t cx_mst          = 0;
     size_t cx_gstair       = 0;
     size_t cx_gray         = 0;
     size_t cx_naive        = 0;
-    size_t cx_todd_naive   = FAIL;  // full-circuit Todd+Naive
-    bool   pp_has_skipped  = false; // any block exceeded max_rz
+    size_t cx_todd_naive   = FAIL;
+    size_t rz_todd_naive   = FAIL;
+    bool   pp_has_skipped  = false;
     bool   ok              = false;
 };
 
@@ -180,29 +231,34 @@ static CircuitResult benchmark_circuit(fs::path const& path,
     auto& qcir = *qcir_opt;
 
     r.n_qubits = qcir.get_num_qubits();
+    r.orig_cx  = count_cx(qcir);
+    r.orig_rz  = count_rz(qcir);
     auto const extracted = extract_phase_blocks_with_boundaries(qcir);
     r.n_blocks = extracted.blocks.size();
 
-    // k=1: per-block independent synthesis (same as before)
+    // k=1: per-block independent synthesis
     for (auto const& block : extracted.blocks) {
         auto const problem = phase_block_to_problem(block);
         auto const br      = benchmark_block(problem, cfg, max_rz);
-        r.total_rz    += br.rz;
-        // When PhasePoly A* is skipped (block > max_rz), fall back to MST so
-        // the pp total is still a fair whole-circuit number, not artificially low.
-        size_t pp_this = (br.cx_phasepoly == FAIL) ? br.cx_mst : br.cx_phasepoly;
-        r.cx_pp_k1    += (pp_this == FAIL) ? 0 : pp_this;
-        r.cx_mst      += (br.cx_mst    == FAIL) ? 0 : br.cx_mst;
-        r.cx_gstair   += (br.cx_gstair == FAIL) ? 0 : br.cx_gstair;
-        r.cx_gray     += (br.cx_gray   == FAIL) ? 0 : br.cx_gray;
-        r.cx_naive    += (br.cx_naive  == FAIL) ? 0 : br.cx_naive;
-        if (br.cx_phasepoly == FAIL) r.pp_has_skipped = true;
+        r.input_rz += br.rz;
+        // When PhasePoly A* is skipped (block > max_rz), fall back to MST.
+        bool const skipped = (br.cx_phasepoly == FAIL);
+        r.cx_pp_k1  += skipped ? (br.cx_mst  == FAIL ? 0 : br.cx_mst)  : br.cx_phasepoly;
+        r.rz_pp_k1  += skipped ? br.rz                                  : br.rz_phasepoly;
+        r.cx_mst    += (br.cx_mst    == FAIL) ? 0 : br.cx_mst;
+        r.cx_gstair += (br.cx_gstair == FAIL) ? 0 : br.cx_gstair;
+        r.cx_gray   += (br.cx_gray   == FAIL) ? 0 : br.cx_gray;
+        r.cx_naive  += (br.cx_naive  == FAIL) ? 0 : br.cx_naive;
+        if (skipped) r.pp_has_skipped = true;
     }
 
-    // k=2,3,5: warm-start group synthesis
-    r.cx_pp_k2 = synthesize_grouped(extracted, 2, cfg);
-    r.cx_pp_k3 = synthesize_grouped(extracted, 3, cfg);
-    r.cx_pp_k5 = synthesize_grouped(extracted, 5, cfg);
+    // k=2,3,5: group synthesis (SSA merge or joint A*)
+    auto const gr2 = synthesize_grouped(extracted, 2, cfg);
+    r.cx_pp_k2 = gr2.num_cx;  r.rz_pp_k2 = gr2.num_rz;
+    auto const gr3 = synthesize_grouped(extracted, 3, cfg);
+    r.cx_pp_k3 = gr3.num_cx;  r.rz_pp_k3 = gr3.num_rz;
+    auto const gr5 = synthesize_grouped(extracted, 5, cfg);
+    r.cx_pp_k5 = gr5.num_cx;  r.rz_pp_k5 = gr5.num_rz;
 
     // Full-circuit Todd+Naive comparison
     if (run_todd) {
@@ -212,7 +268,10 @@ static CircuitResult benchmark_circuit(fs::path const& path,
             auto todd_qcir = to_qcir(*tableau_opt,
                                      HOptSynthesisStrategy{},
                                      NaivePauliRotationsSynthesisStrategy{});
-            if (todd_qcir) r.cx_todd_naive = count_cx(*todd_qcir);
+            if (todd_qcir) {
+                r.cx_todd_naive = count_cx(*todd_qcir);
+                r.rz_todd_naive = count_rz(*todd_qcir);
+            }
         }
     }
 
@@ -229,11 +288,16 @@ int main(int argc, char** argv) {
 
     if (argc < 2) {
         fmt::println("Usage: {} [options] <file.qc> ...", argv[0]);
+        fmt::println("       {} [options] --set {{table1|extended}}", argv[0]);
         fmt::println("Options:");
-        fmt::println("  --max-rz N    Skip PhasePoly A* for blocks with > N Rz terms (default: 30)");
-        fmt::println("  --max-queue N A* open-set cap (default: 5000)");
-        fmt::println("  --max-exp N   A* expansion cap (default: 100000)");
-        fmt::println("  --no-todd     Skip full-circuit Todd comparison");
+        fmt::println("  --set NAME          Run a predefined circuit set (table1: 19 circuits, extended: 28)");
+        fmt::println("  --benchmark-dir D   Base directory for --set (default: benchmark/qc/optimized)");
+        fmt::println("  --output FILE       Write results to FILE (default: results/benchmark_TIMESTAMP.txt)");
+        fmt::println("  --max-rz N          Skip PhasePoly A* for blocks with > N Rz terms (default: 30)");
+        fmt::println("  --max-queue N       A* open-set cap (default: 5000)");
+        fmt::println("  --max-exp N         A* expansion cap (default: 100000)");
+        fmt::println("  --no-todd           Skip full-circuit Todd comparison");
+        fmt::println("  --joint-astar       Use joint A* on pairs (default: SSA merge, paper §3.3)");
         return 1;
     }
 
@@ -244,6 +308,8 @@ int main(int argc, char** argv) {
 
     size_t max_rz  = 30;
     bool   no_todd = false;
+    fs::path bench_dir  = "benchmark/qc/optimized";
+    fs::path output_path;  // empty = auto-generate
 
     std::vector<fs::path> circuit_paths;
 
@@ -257,6 +323,27 @@ int main(int argc, char** argv) {
             cfg.max_expansions = std::stoul(argv[++i]);
         } else if (arg == "--no-todd") {
             no_todd = true;
+        } else if (arg == "--joint-astar") {
+            cfg.multi_block_strategy = MultiBlockStrategy::joint_astar;
+        } else if (arg == "--benchmark-dir" && i + 1 < argc) {
+            bench_dir = argv[++i];
+        } else if (arg == "--output" && i + 1 < argc) {
+            output_path = argv[++i];
+        } else if (arg == "--set" && i + 1 < argc) {
+            std::string set_name{argv[++i]};
+            auto add_set = [&](std::vector<std::string> const& names) {
+                for (auto const& n : names)
+                    circuit_paths.push_back(bench_dir / (n + ".qc"));
+            };
+            if (set_name == "table1") {
+                add_set(TABLE1_CIRCUITS);
+            } else if (set_name == "extended") {
+                add_set(TABLE1_CIRCUITS);
+                add_set(EXTENDED_EXTRA_CIRCUITS);
+            } else {
+                fmt::println(stderr, "Unknown set '{}'. Use: table1, extended", set_name);
+                return 1;
+            }
         } else if (arg.rfind("--", 0) == 0) {
             fmt::println(stderr, "Unknown option: {}", arg);
             return 1;
@@ -270,10 +357,33 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fmt::println("Config: max_rz={} max_queue={} max_exp={} todd={}",
-                 max_rz, cfg.max_queue_size, cfg.max_expansions,
-                 no_todd ? "off" : "on");
-    fmt::println("");
+    // ── Auto-generate output path if not specified ────────────────────────────
+    if (output_path.empty()) {
+        std::time_t now = std::time(nullptr);
+        char ts[32];
+        std::strftime(ts, sizeof(ts), "%Y%m%d_%H%M%S", std::localtime(&now));
+        fs::create_directories("results");
+        output_path = fs::path("results") / fmt::format("benchmark_{}.txt", ts);
+    } else {
+        fs::create_directories(output_path.parent_path().empty() ? fs::path(".") : output_path.parent_path());
+    }
+    std::ofstream outfile{output_path};
+    if (!outfile) {
+        fmt::println(stderr, "Warning: cannot open output file '{}'", output_path.string());
+    }
+
+    // Helper: print to stdout and file simultaneously.
+    auto emit = [&](std::string const& line) {
+        fmt::println("{}", line);
+        if (outfile) outfile << line << '\n';
+    };
+
+    std::string const strategy_str =
+        cfg.multi_block_strategy == MultiBlockStrategy::joint_astar ? "joint-astar" : "ssa-merge";
+    emit(fmt::format("Config: max_rz={} max_queue={} max_exp={} todd={} strategy={}",
+                     max_rz, cfg.max_queue_size, cfg.max_expansions,
+                     no_todd ? "off" : "on", strategy_str));
+    emit("");
 
     std::vector<CircuitResult> results;
     results.reserve(circuit_paths.size());
@@ -283,83 +393,115 @@ int main(int argc, char** argv) {
         auto r = benchmark_circuit(p, cfg, max_rz, !no_todd);
         if (r.ok) {
             std::string tag = r.pp_has_skipped ? " [pp:partial]" : "";
-            fmt::println(" done  (blocks={}, Rz={}{})", r.n_blocks, r.total_rz, tag);
+            fmt::println(" done  (blocks={}, Rz={}{})", r.n_blocks, r.input_rz, tag);
         } else {
             fmt::println(" FAILED to read");
         }
         results.push_back(std::move(r));
     }
-
     fmt::println("");
-    // ---- Header ----
-    // Columns: circuit | q | blk | Rz | pp(1) | pp(2) | pp(3) | pp(5) | mst+P | gstair+P | gray+P | naive+P | todd+naive
-    // k = group size for warm-start multi-block synthesis
-    static constexpr int NW = 38;
-    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {:>10}",
-                 "circuit", NW, "q", "blk", "Rz",
-                 "pp(1)", "pp(2)", "pp(3)", "pp(5)",
-                 "mst+P", "gstair+P", "gray+P", "naive+P", "todd+naive");
-    int const LINE = NW + 3 + 4 + 5 + 7 + 6 + 6 + 6 + 7 + 8 + 7 + 8 + 10 + 13 * 2;
-    fmt::println("{}", std::string(LINE, '-'));
 
-    size_t tot_pp_k1 = 0, tot_pp_k2 = 0, tot_pp_k3 = 0, tot_pp_k5 = 0;
-    size_t tot_mst = 0, tot_gstair = 0, tot_gray = 0, tot_naive = 0, tot_todd = 0;
+    // Columns: circuit | q | blk | original | pp(1) | pp(2) | pp(3) | pp(5) | mst+P | gray+P | todd+naive
+    // Each cell shows "CX/total" where total = CX + Rz.
+    static constexpr int NW = 28;  // circuit name width
+    static constexpr int CW = 10;  // data column width
+
+    std::string const sub    = fmt::format("{:>{}}", "CX/tot", CW);
+    std::string const hdr1   = fmt::format("{:<{}}  {:>3} {:>4}  {:>{}}  {:>{}}  {:>{}}  {:>{}}  {:>{}}  {:>{}}  {:>{}}  {:>{}}",
+                 "circuit", NW, "q", "blk",
+                 "pyzx", CW, "pp(1)", CW, "pp(2)", CW, "pp(3)", CW, "pp(5)", CW,
+                 "mst+P", CW, "gray+P", CW, "todd+naive", CW);
+    std::string const hdr2   = fmt::format("{:<{}}  {:>3} {:>4}  {}  {}  {}  {}  {}  {}  {}  {}",
+                 "", NW, "", "",
+                 sub, sub, sub, sub, sub, sub, sub, sub);
+    int const LINE = static_cast<int>(hdr1.size());
+    std::string const divider(LINE, '-');
+
+    emit(hdr1);
+    emit(hdr2);
+    emit(divider);
+
+    // accumulators: [0]=CX, [1]=total(CX+Rz)
+    size_t tot_orig[2]{}, tot_pp_k1[2]{}, tot_pp_k2[2]{}, tot_pp_k3[2]{}, tot_pp_k5[2]{};
+    size_t tot_mst[2]{}, tot_gray[2]{}, tot_todd[2]{};
     size_t n_todd = 0;
+
+    // Format "CX/total" cell; append * if skipped.
+    auto cell = [&](size_t cx, size_t rz, bool skipped = false) -> std::string {
+        std::string s = fmt::format("{}/{}", cx, cx + rz);
+        if (skipped) s += '*';
+        return fmt::format("{:>{}}", s, CW);
+    };
+    auto cell_fail = [&]() -> std::string {
+        return fmt::format("{:>{}}", "n/a", CW);
+    };
+    auto tot_cell = [&](size_t cx, size_t tot) -> std::string {
+        return fmt::format("{:>{}}", fmt::format("{}/{}", cx, tot), CW);
+    };
 
     for (auto const& r : results) {
         if (!r.ok) {
-            fmt::println("{:<{}}  (read failed)", r.name, NW);
+            emit(fmt::format("{:<{}}  (read failed)", r.name, NW));
             continue;
         }
 
-        std::string todd_str = (r.cx_todd_naive == FAIL) ? "       n/a" :
-                               fmt::format("{:>10}", r.cx_todd_naive);
-        std::string pp1_str  = r.pp_has_skipped ?
-                               fmt::format("{:>7}*", r.cx_pp_k1) :
-                               fmt::format("{:>7}", r.cx_pp_k1);
+        size_t const ref_rz  = r.input_rz;  // reference methods keep input Rz unchanged
+        std::string todd_cell = (r.cx_todd_naive == FAIL) ? cell_fail()
+                              : cell(r.cx_todd_naive, r.rz_todd_naive);
 
-        fmt::println("{:<{}} {:>3} {:>4} {:>5}  {}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {}",
-                     r.name, NW, r.n_qubits, r.n_blocks, r.total_rz,
-                     pp1_str, r.cx_pp_k2, r.cx_pp_k3, r.cx_pp_k5,
-                     r.cx_mst, r.cx_gstair, r.cx_gray, r.cx_naive,
-                     todd_str);
+        emit(fmt::format("{:<{}}  {:>3} {:>4}  {}  {}  {}  {}  {}  {}  {}  {}",
+                         r.name, NW, r.n_qubits, r.n_blocks,
+                         cell(r.orig_cx,   r.orig_rz),
+                         cell(r.cx_pp_k1,  r.rz_pp_k1, r.pp_has_skipped),
+                         cell(r.cx_pp_k2,  r.rz_pp_k2),
+                         cell(r.cx_pp_k3,  r.rz_pp_k3),
+                         cell(r.cx_pp_k5,  r.rz_pp_k5),
+                         cell(r.cx_mst,    ref_rz),
+                         cell(r.cx_gray,   ref_rz),
+                         todd_cell));
 
-        tot_pp_k1  += r.cx_pp_k1;
-        tot_pp_k2  += r.cx_pp_k2;
-        tot_pp_k3  += r.cx_pp_k3;
-        tot_pp_k5  += r.cx_pp_k5;
-        tot_mst    += r.cx_mst;
-        tot_gstair += r.cx_gstair;
-        tot_gray   += r.cx_gray;
-        tot_naive  += r.cx_naive;
-        if (r.cx_todd_naive != FAIL) { tot_todd += r.cx_todd_naive; ++n_todd; }
+        tot_orig[0]  += r.orig_cx;   tot_orig[1]  += r.orig_cx  + r.orig_rz;
+        tot_pp_k1[0] += r.cx_pp_k1; tot_pp_k1[1] += r.cx_pp_k1 + r.rz_pp_k1;
+        tot_pp_k2[0] += r.cx_pp_k2; tot_pp_k2[1] += r.cx_pp_k2 + r.rz_pp_k2;
+        tot_pp_k3[0] += r.cx_pp_k3; tot_pp_k3[1] += r.cx_pp_k3 + r.rz_pp_k3;
+        tot_pp_k5[0] += r.cx_pp_k5; tot_pp_k5[1] += r.cx_pp_k5 + r.rz_pp_k5;
+        tot_mst[0]   += r.cx_mst;   tot_mst[1]   += r.cx_mst   + ref_rz;
+        tot_gray[0]  += r.cx_gray;  tot_gray[1]  += r.cx_gray  + ref_rz;
+        if (r.cx_todd_naive != FAIL) {
+            tot_todd[0] += r.cx_todd_naive;
+            tot_todd[1] += r.cx_todd_naive + (r.rz_todd_naive == FAIL ? 0 : r.rz_todd_naive);
+            ++n_todd;
+        }
     }
 
-    fmt::println("{}", std::string(LINE, '-'));
-    std::string todd_total = (n_todd == 0) ? "       n/a" :
-                             fmt::format("{:>10}", tot_todd);
-    fmt::println("{:<{}} {:>3} {:>4} {:>5}  {:>7}  {:>6}  {:>6}  {:>6}  {:>7}  {:>8}  {:>7}  {:>8}  {}",
-                 "TOTAL", NW, "-", "-", "-",
-                 tot_pp_k1, tot_pp_k2, tot_pp_k3, tot_pp_k5,
-                 tot_mst, tot_gstair, tot_gray, tot_naive,
-                 todd_total);
+    emit(divider);
+    std::string todd_tot = (n_todd == 0) ? cell_fail()
+                         : tot_cell(tot_todd[0], tot_todd[1]);
+    emit(fmt::format("{:<{}}  {:>3} {:>4}  {}  {}  {}  {}  {}  {}  {}  {}",
+                     "TOTAL", NW, "-", "-",
+                     tot_cell(tot_orig[0],  tot_orig[1]),
+                     tot_cell(tot_pp_k1[0], tot_pp_k1[1]),
+                     tot_cell(tot_pp_k2[0], tot_pp_k2[1]),
+                     tot_cell(tot_pp_k3[0], tot_pp_k3[1]),
+                     tot_cell(tot_pp_k5[0], tot_pp_k5[1]),
+                     tot_cell(tot_mst[0],   tot_mst[1]),
+                     tot_cell(tot_gray[0],  tot_gray[1]),
+                     todd_tot));
 
-    fmt::println("");
-    fmt::println("Notes:");
-    fmt::println("  pp(k) = PhasePoly A* with joint synthesis (Stage 6):");
-    fmt::println("          k=1: per-block independent A*");
-    fmt::println("          k>1: blocks partitioned into groups of k; each consecutive pair within");
-    fmt::println("               a group is synthesized jointly (a single CNOT can reduce parity");
-    fmt::println("               columns from BOTH blocks simultaneously); trailing singleton");
-    fmt::println("               within a group is synthesized independently.");
-    fmt::println("          Infeasible pairs (H-boundary singularity) and budget-exhausted pairs");
-    fmt::println("          fall back to independent A* for correctness; otherwise the joint");
-    fmt::println("          A* result is reported as-is (may be > pp(k=1) if budget is tight).");
-    fmt::println("  mst+P / gstair+P / gray+P / naive+P = block-level synthesis + PMH output-matrix pass");
-    fmt::println("  todd+naive = full-circuit Todd T-count opt (Tableau pipeline) + naive rotation synthesis");
+    emit("");
+    emit("Notes:");
+    emit("  Each cell: CX/total where total = CX + Rz (paper Table 1 format).");
+    emit("  pyzx      = PyZX-pre-optimized input circuit (before PhasePoly synthesis).");
+    emit(fmt::format("  pp(k)     = PhasePoly A* ({}) multi-block synthesis:", strategy_str));
+    emit("              k=1: per-block independent A*");
+    emit("              k>1: groups of k blocks SSA-merged into one problem, solved by single A*.");
+    emit("              Use --joint-astar to switch to the experimental joint A* strategy.");
+    emit("  mst+P / gray+P = block-level synthesis + PMH output-matrix pass (Rz = input Rz).");
+    emit("  todd+naive = full-circuit Todd T-count opt + naive rotation synthesis.");
     if (n_todd > 0 && n_todd < results.size())
-        fmt::println("  todd+naive: {} / {} circuits succeeded", n_todd, results.size());
-    fmt::println("  * = PhasePoly A* skipped for blocks with > {} Rz terms; MST used as fallback", max_rz);
+        emit(fmt::format("  todd+naive: {} / {} circuits succeeded.", n_todd, results.size()));
+    emit(fmt::format("  * = PhasePoly A* skipped for blocks with > {} Rz terms; MST used.", max_rz));
+    emit(fmt::format("Output saved to: {}", output_path.string()));
 
     return 0;
 }
