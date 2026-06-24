@@ -41,7 +41,7 @@ Command benchmark_table1_cmd() {
                 parser.add_argument<std::string>("--format")
                     .default_value("markdown")
                     .constraint(choices_allow_prefix({"markdown", "csv", "phase-csv"}))
-                    .help("output format: markdown, csv (full circuit), phase-csv (CX+Rz blocks only)");
+                    .help("output format: markdown, csv (CNOT, paper Table 1), phase-csv (CX+Rz blocks only)");
 
                 parser.add_argument<std::string>("--output")
                     .default_value("")

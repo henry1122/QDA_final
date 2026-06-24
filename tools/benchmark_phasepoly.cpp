@@ -13,6 +13,7 @@
     --max-queue N     A* open-set size cap (default: 5000)
     --max-exp N       A* expansion cap (default: 100000)
     --no-todd         Skip full-circuit Todd comparison
+    --block-todd      Apply block-level Todd before pp/mst/gray synthesis (TODD+PP)
 
   For each .qc circuit the tool runs seven synthesis methods on the same input:
 
@@ -54,7 +55,7 @@ bool stop_requested() { return false; }
 #include "tableau/phasepoly/gaussian.hpp"
 #include "tableau/phasepoly/phase_block.hpp"
 #include "tableau/phasepoly/phase_poly_problem.hpp"
-#include "tableau/phasepoly/search.hpp"
+#include "tableau/phasepoly/todd_preprocess.hpp"
 #include "tableau/stabilizer_tableau.hpp"
 #include "tableau/tableau_optimization.hpp"
 
@@ -107,9 +108,15 @@ struct BlockResult {
     size_t cx_naive;
 };
 
-static BlockResult benchmark_block(PhasePolyProblem const& problem,
+static BlockResult benchmark_block(PhasePolyProblem problem,
                                    PhasePolyConfig const& cfg,
-                                   size_t max_rz) {
+                                   size_t max_rz,
+                                   bool block_todd) {
+    if (block_todd) {
+        if (auto const opt = todd_optimize_problem(problem)) {
+            problem = *opt;
+        }
+    }
     size_t const m    = problem.num_phase_terms();
     size_t const pmh_o = linear_reversible_cnot_cost(
         problem.output_matrix, LinearSynthesisMode::patel_markov_hayes);
@@ -166,7 +173,8 @@ struct CircuitResult {
 static CircuitResult benchmark_circuit(fs::path const& path,
                                        PhasePolyConfig const& cfg,
                                        size_t max_rz,
-                                       bool   run_todd) {
+                                       bool   run_todd,
+                                       bool   block_todd) {
     CircuitResult r;
     r.name = path.stem().string();
 
@@ -179,8 +187,8 @@ static CircuitResult benchmark_circuit(fs::path const& path,
     r.n_blocks = blocks.size();
 
     for (auto const& block : blocks) {
-        auto const problem = phase_block_to_problem(block);
-        auto const br      = benchmark_block(problem, cfg, max_rz);
+        auto problem = phase_block_to_problem(block);
+        auto const br      = benchmark_block(problem, cfg, max_rz, block_todd);
         r.total_rz    += br.rz;
         // When PhasePoly A* is skipped (block > max_rz), fall back to MST so
         // the pp total is still a fair whole-circuit number, not artificially low.
@@ -223,6 +231,7 @@ int main(int argc, char** argv) {
         fmt::println("  --max-queue N A* open-set cap (default: 5000)");
         fmt::println("  --max-exp N   A* expansion cap (default: 100000)");
         fmt::println("  --no-todd     Skip full-circuit Todd comparison");
+        fmt::println("  --block-todd  Block-level Todd before pp synthesis (TODD+PP)");
         return 1;
     }
 
@@ -231,8 +240,9 @@ int main(int argc, char** argv) {
     cfg.max_expansions = 100000;
     cfg.max_solutions  = 5;
 
-    size_t max_rz  = 30;
-    bool   no_todd = false;
+    size_t max_rz     = 30;
+    bool   no_todd    = false;
+    bool   block_todd = false;
 
     std::vector<fs::path> circuit_paths;
 
@@ -246,6 +256,8 @@ int main(int argc, char** argv) {
             cfg.max_expansions = std::stoul(argv[++i]);
         } else if (arg == "--no-todd") {
             no_todd = true;
+        } else if (arg == "--block-todd") {
+            block_todd = true;
         } else if (arg.rfind("--", 0) == 0) {
             fmt::println(stderr, "Unknown option: {}", arg);
             return 1;
@@ -259,9 +271,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    fmt::println("Config: max_rz={} max_queue={} max_exp={} todd={}",
+    fmt::println("Config: max_rz={} max_queue={} max_exp={} todd={} block_todd={}",
                  max_rz, cfg.max_queue_size, cfg.max_expansions,
-                 no_todd ? "off" : "on");
+                 no_todd ? "off" : "on", block_todd ? "on" : "off");
     fmt::println("");
 
     std::vector<CircuitResult> results;
@@ -269,7 +281,7 @@ int main(int argc, char** argv) {
     for (auto const& p : circuit_paths) {
         fmt::print("  {:.<50}", p.stem().string());
         fflush(stdout);
-        auto r = benchmark_circuit(p, cfg, max_rz, !no_todd);
+        auto r = benchmark_circuit(p, cfg, max_rz, !no_todd, block_todd);
         if (r.ok) {
             std::string tag = r.pp_has_skipped ? " [pp:partial]" : "";
             fmt::println(" done  (blocks={}, Rz={}{})", r.n_blocks, r.total_rz, tag);

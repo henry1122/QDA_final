@@ -142,6 +142,14 @@ size_t table1_phase_cx_rz_count(qcir::QCir const& circuit) {
     return n;
 }
 
+size_t table1_cnot_count(qcir::QCir const& circuit) {
+    size_t n = 0;
+    for (auto const* gate : circuit.get_gates()) {
+        if (gate->get_operation().get_underlying_if<qcir::ControlGate>()) ++n;
+    }
+    return n;
+}
+
 size_t table1_gate_count(qcir::QCir const& circuit) {
     auto const stat = qcir::get_gate_statistics(circuit);
     auto const clifford = stat.contains("clifford") ? stat.at("clifford") : 0;
@@ -153,8 +161,9 @@ std::optional<qcir::QCir> synthesize_table1(
     qcir::QCir const& circuit,
     Table1Strategy strategy,
     PhasePolyConfig const& config,
-    size_t* phase_gate_out) {
-    if (strategy == Table1Strategy::phasepoly) {
+    size_t* phase_gate_out,
+    bool use_multiblock) {
+    if (strategy == Table1Strategy::phasepoly && use_multiblock) {
         return optimize_qcir_phasepoly_multiblock(circuit, config, true, nullptr, phase_gate_out);
     }
     return assemble_from_segments(segment_phase_poly_regions(circuit), strategy, config, phase_gate_out);

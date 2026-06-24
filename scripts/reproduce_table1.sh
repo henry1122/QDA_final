@@ -57,6 +57,7 @@ rows = list(csv.DictReader(open(csv_path)))
 with open(md_path, "w") as f:
     f.write("| circuit | q | blk | Rz | pp | mst+P | gstair+P | gray+P | naive+P | pp/mst | pp/gray |\n")
     f.write("|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+    f.write("\n*Gate metric: Clifford + T-family on full synthesized circuit (paper Table 1; excludes Rz).*\n\n")
     for r in rows:
         if r.get("ok") != "1":
             f.write(f"| {r['circuit']} | ERR | | | | | | | | | |\n")
@@ -67,6 +68,6 @@ with open(md_path, "w") as f:
         f.write(f"| {r['circuit']} | {r['q']} | {r['blk']} | {r['Rz']} | {pp} | {mst} | {r['gstair']} | {gray} | {r['naive']} | {pm} | {pg} |\n")
     f.write(f"\n| **TOTAL** ({n_ok} ok) | | | | **{tp}** | **{tm}** | **{tg}** | **{ty}** | **{tn}** | ")
     f.write(f"{100*tp//tm}% | {100*tp//ty}% |\n" if tm and ty else "| - | - |\n")
-    f.write("\nPaper reference TOTAL: pp=3869, mst+P=4891 (79%), gray+P=5511 (70%)\n")
+    f.write("\nPaper reference TOTAL (19 circuits): pp=3869, mst+P=4891 (79%), gray+P=5511 (70%)\n")
 print(f"Wrote {md_path}")
 PY

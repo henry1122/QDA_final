@@ -23,10 +23,13 @@ enum class Table1Strategy {
     naive,
 };
 
-/// @brief clifford + t-family on the full synthesized circuit (includes boundary gates).
+/// @brief CNOT (CX) gates only — paper Table 1 primary metric (excludes Rz, H, T).
+size_t table1_cnot_count(qcir::QCir const& circuit);
+
+/// @brief clifford + t-family on the full synthesized circuit (auxiliary).
 size_t table1_gate_count(qcir::QCir const& circuit);
 
-/// @brief CX + Rz/PZ gates inside synthesized phase-polynomial blocks only.
+/// @brief CX + Rz/PZ gates inside synthesized phase-polynomial blocks only (auxiliary).
 size_t table1_phase_cx_rz_count(qcir::QCir const& circuit);
 
 /// @brief Synthesize a full circuit using the paper Table 1 pipeline on PhaseBlock IR.
@@ -35,6 +38,7 @@ std::optional<qcir::QCir> synthesize_table1(
     qcir::QCir const& circuit,
     Table1Strategy strategy,
     PhasePolyConfig const& config = {},
-    size_t* phase_gate_out        = nullptr);
+    size_t* phase_gate_out        = nullptr,
+    bool use_multiblock           = false);
 
 }  // namespace qsyn::experimental::phasepoly
