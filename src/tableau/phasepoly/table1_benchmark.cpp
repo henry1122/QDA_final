@@ -31,11 +31,13 @@ std::optional<size_t> run_strategy(
     qcir::QCir const& circuit,
     Table1Strategy strategy,
     PhasePolyConfig const& config,
+    Table1BenchmarkOptions const& options,
     size_t* phase_gate_out = nullptr) {
     size_t phase_gates = 0;
-    if (auto out = synthesize_table1(circuit, strategy, config, &phase_gates)) {
+    if (auto out = synthesize_table1(circuit, strategy, config, &phase_gates, options.use_multiblock)) {
         if (phase_gate_out) *phase_gate_out = phase_gates;
-        return table1_gate_count(*out);
+        // Paper Table 1: CNOT count only (block synthesis + PMH for O; excludes Rz/H/T).
+        return table1_cnot_count(*out);
     }
     return std::nullopt;
 }
@@ -78,35 +80,35 @@ Table1Row benchmark_table1_circuit(
     row.num_rz     = run_config.apply_block_todd ? count_rz_after_todd(segments)
                                                   : count_rz_segments(segments);
 
-    if (auto g = run_strategy(*circuit, Table1Strategy::phasepoly, run_config, &row.pp_phase)) {
+    if (auto g = run_strategy(*circuit, Table1Strategy::phasepoly, run_config, options, &row.pp_phase)) {
         row.pp = *g;
     } else {
         row.error = "PhasePoly failed";
         return row;
     }
 
-    if (auto g = run_strategy(*circuit, Table1Strategy::mst, run_config, &row.mst_phase)) {
+    if (auto g = run_strategy(*circuit, Table1Strategy::mst, run_config, options, &row.mst_phase)) {
         row.mst = *g;
     } else {
         row.error = "MST failed";
         return row;
     }
 
-    if (auto g = run_strategy(*circuit, Table1Strategy::gray, run_config, &row.gray_phase)) {
+    if (auto g = run_strategy(*circuit, Table1Strategy::gray, run_config, options, &row.gray_phase)) {
         row.gray = *g;
     } else {
         row.error = "Gray failed";
         return row;
     }
 
-    if (auto g = run_strategy(*circuit, Table1Strategy::gstair, run_config, &row.gstair_phase)) {
+    if (auto g = run_strategy(*circuit, Table1Strategy::gstair, run_config, options, &row.gstair_phase)) {
         row.gstair = *g;
     } else {
         row.error = "Gstair failed";
         return row;
     }
 
-    if (auto g = run_strategy(*circuit, Table1Strategy::naive, run_config, &row.naive_phase)) {
+    if (auto g = run_strategy(*circuit, Table1Strategy::naive, run_config, options, &row.naive_phase)) {
         row.naive = *g;
     } else {
         row.error = "Naive failed";
@@ -144,6 +146,7 @@ Table1Summary benchmark_table1(
 }
 
 void print_table1_markdown(Table1Summary const& summary, std::ostream& os) {
+    os << "# gate metric: CNOT only (paper Table 1; block synthesis + PMH for O)\n\n";
     os << "| circuit | q | blk | Rz | pp | mst+P | gstair+P | gray+P | naive+P | pp/mst | pp/gray |\n";
     os << "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n";
 
@@ -177,6 +180,7 @@ void print_table1_markdown(Table1Summary const& summary, std::ostream& os) {
 }
 
 void print_table1_csv(Table1Summary const& summary, std::ostream& os) {
+    os << "# gate metric: CNOT only (paper Table 1; block synthesis + PMH for O)\n";
     os << "circuit,q,blk,Rz,pp,mst,gstair,gray,naive,todd_naive,pp_mst_pct,pp_gray_pct,ok,error\n";
     for (auto const& r : summary.rows) {
         os << r.circuit << ',' << r.qubits << ',' << r.num_blocks << ',' << r.num_rz << ','

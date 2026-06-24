@@ -17,7 +17,7 @@
 
 namespace qsyn::experimental::phasepoly {
 
-/// @brief One row of paper Table 1 (gate counts after Todd + synthesis).
+/// @brief One row of paper Table 1 (CNOT counts after Todd + synthesis).
 struct Table1Row {
     std::string circuit;
     size_t qubits       = 0;
@@ -60,6 +60,8 @@ struct Table1Summary {
 struct Table1BenchmarkOptions {
     /// Apply block-level Todd preprocessing before synthesis (paper pipeline).
     bool use_todd = true;
+    /// Use multiblock SSA merging for PhasePoly (§3.3). Off = paper Table 1 single-block.
+    bool use_multiblock = false;
 };
 
 /// @brief Paper Table 1 benchmark circuits (`benchmark/qc/optimized/*_pyzx.qc`).
