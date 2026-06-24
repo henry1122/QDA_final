@@ -7,6 +7,7 @@
 
 #include "./search.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -42,11 +43,6 @@ size_t phase_cost(SearchState const& s) {
 
 /**
  * @brief Emit an `Rz` for every weight-1 phase column and remove it.
- *
- * When a column becomes `e_q`, qubit `q` holds exactly that column's parity, so
- * the rotation can be applied there (proven in the Stage-3 notes). Repeats until
- * no weight-1 column remains, since removing one may not expose others but the
- * scan is cheap.
  */
 void remove_ready_phase_columns(SearchState& s) {
     bool changed = true;
@@ -58,48 +54,106 @@ void remove_ready_phase_columns(SearchState& s) {
                 s.phase.remove_column(c);
                 s.angles.erase(s.angles.begin() + static_cast<std::ptrdiff_t>(c));
                 changed = true;
-                break;  // indices shifted; restart the scan
+                break;
             }
         }
     }
 }
 
 /**
- * @brief Active row pairs (i, j): applying `apply_cnot(i, j)` reduces the
- *        Hamming weight of at least one phase column -- equivalently, rows i and
- *        j both carry a 1 in some column (paper §3.2.1).
+ * @brief Active row pairs ranked by net benefit.
+ *
+ * For pair (i,j): benefit = columns where P[i,c]=P[j,c]=1 (CNOT reduces weight);
+ * harmful = columns where P[i,c]=0, P[j,c]=1 (CNOT increases weight).
+ * net_benefit = benefit - harmful.
+ *
+ * Pairs are sorted by descending net_benefit; only the top max_candidates pairs
+ * are returned.  max_candidates = SIZE_MAX returns all pairs (original behaviour).
  */
-std::vector<std::pair<size_t, size_t>> active_row_pairs(ParityMatrix const& phase) {
+std::vector<std::pair<size_t, size_t>> active_row_pairs(ParityMatrix const& phase,
+                                                         size_t max_candidates) {
     size_t const n = phase.n_rows();
-    std::vector<std::pair<size_t, size_t>> pairs;
+
+    struct Candidate {
+        int    net_benefit;
+        size_t i, j;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(n * (n - 1));
+
     for (size_t i = 0; i < n; ++i) {
         for (size_t j = 0; j < n; ++j) {
             if (i == j) continue;
-            for (size_t c = 0; c < phase.n_cols(); ++c) {
-                if (phase.get(i, c) && phase.get(j, c)) {
-                    pairs.emplace_back(i, j);
-                    break;
-                }
-            }
+            // Bitset AND: positions where both rows are 1 → columns benefited.
+            sul::dynamic_bitset<> shared = phase.row(i);
+            shared &= phase.row(j);
+            int const benefit = static_cast<int>(shared.count());
+            if (benefit == 0) continue;  // not active
+            // Positions where row_j=1 but row_i=0 → columns harmed.
+            int const harmful = static_cast<int>(phase.row(j).count()) - benefit;
+            candidates.push_back({benefit - harmful, i, j});
         }
     }
+
+    // Sort by descending net_benefit; partial_sort if we only need top K.
+    if (max_candidates < candidates.size()) {
+        auto const cutoff =
+            candidates.begin() + static_cast<std::ptrdiff_t>(max_candidates);
+        std::partial_sort(candidates.begin(), cutoff, candidates.end(),
+                          [](Candidate const& a, Candidate const& b) {
+                              return a.net_benefit > b.net_benefit;
+                          });
+        candidates.resize(max_candidates);
+    }
+
+    std::vector<std::pair<size_t, size_t>> pairs;
+    pairs.reserve(candidates.size());
+    for (auto const& c : candidates) pairs.emplace_back(c.i, c.j);
     return pairs;
 }
 
-/// @brief A canonical key over (P with angles, O) for the visited cache.
-std::string state_key(SearchState const& s) {
+/**
+ * @brief A canonical key over (P with angles, O).
+ *
+ * When `canonical` is true, phase columns are sorted lexicographically before
+ * hashing so that column-permuted states map to the same key.  The output
+ * matrix O is NOT sorted (its structure depends on the CNOT sequence).
+ */
+std::string state_key(SearchState const& s, bool canonical) {
     std::string key;
-    key.reserve(s.phase.n_rows() * s.phase.n_cols() + s.output.n_rows() * s.output.n_cols());
-    for (size_t c = 0; c < s.phase.n_cols(); ++c) {
-        for (size_t r = 0; r < s.phase.n_rows(); ++r) key += s.phase.get(r, c) ? '1' : '0';
-        key += ':';
-        key += s.angles[c].get_print_string();
-        key += ';';
+
+    if (canonical) {
+        // Collect per-column tokens and sort them.
+        std::vector<std::string> col_keys;
+        col_keys.reserve(s.phase.n_cols());
+        for (size_t c = 0; c < s.phase.n_cols(); ++c) {
+            std::string ck;
+            ck.reserve(s.phase.n_rows() + 16);
+            for (size_t r = 0; r < s.phase.n_rows(); ++r)
+                ck += s.phase.get(r, c) ? '1' : '0';
+            ck += ':';
+            ck += s.angles[c].get_print_string();
+            ck += ';';
+            col_keys.push_back(std::move(ck));
+        }
+        std::sort(col_keys.begin(), col_keys.end());
+        for (auto const& ck : col_keys) key += ck;
+    } else {
+        key.reserve(s.phase.n_rows() * s.phase.n_cols() +
+                    s.output.n_rows() * s.output.n_cols());
+        for (size_t c = 0; c < s.phase.n_cols(); ++c) {
+            for (size_t r = 0; r < s.phase.n_rows(); ++r)
+                key += s.phase.get(r, c) ? '1' : '0';
+            key += ':';
+            key += s.angles[c].get_print_string();
+            key += ';';
+        }
     }
+
     key += '#';
-    for (size_t r = 0; r < s.output.n_rows(); ++r) {
-        for (size_t c = 0; c < s.output.n_cols(); ++c) key += s.output.get(r, c) ? '1' : '0';
-    }
+    for (size_t r = 0; r < s.output.n_rows(); ++r)
+        for (size_t c = 0; c < s.output.n_cols(); ++c)
+            key += s.output.get(r, c) ? '1' : '0';
     return key;
 }
 
@@ -116,7 +170,6 @@ void finish_output(SearchState& s, LinearSynthesisMode mode) {
 SearchState greedy_synthesize(PhasePolyProblem const& problem, LinearSynthesisMode finish_mode) {
     SearchState s{problem.phase_matrix, problem.phase_angles, problem.output_matrix, {}, 0};
     remove_ready_phase_columns(s);
-    // Complete one column at a time by folding pairs of set rows together.
     while (!s.phase.has_no_columns()) {
         size_t const col = 0;
         while (s.phase.column_weight(col) > 1) {
@@ -153,10 +206,6 @@ SynthesisResult to_result(SearchState const& s, PhasePolyProblem const& problem)
 
 }  // namespace
 
-SynthesisResult greedy_synthesize_problem(PhasePolyProblem const& problem, PhasePolyConfig const& config) {
-    return to_result(greedy_synthesize(problem, config.finish_mode), problem);
-}
-
 SynthesisResult synthesize_phasepoly(PhasePolyProblem const& problem, PhasePolyConfig const& config) {
     using Priority = std::tuple<size_t, size_t, size_t, size_t, uint64_t>;  // f, h1, h2, (max-g), counter
 
@@ -167,18 +216,30 @@ SynthesisResult synthesize_phasepoly(PhasePolyProblem const& problem, PhasePolyC
     std::unordered_map<std::string, size_t> best_g;
     uint64_t counter = 0;
 
-    auto const priority_of = [&](SearchState const& s) -> Priority {
-        size_t const h1 = phase_cost(s);
-        size_t const h2 = linear_reversible_cnot_cost(s.output, config.h2_mode);
-        size_t const f  = s.g_cost + h1 + h2;
-        return {f, h1, h2, std::numeric_limits<size_t>::max() - s.g_cost, counter++};
-    };
+    // Best CX count found so far (for f-cutoff pruning).
+    size_t best_cx = std::numeric_limits<size_t>::max();
 
     auto const push = [&](SearchState s) {
-        auto const key = state_key(s);
-        if (auto const it = best_g.find(key); it != best_g.end() && it->second <= s.g_cost) return;
+        // Cheapest exit first: g alone already meets or beats best known solution.
+        if (config.f_cutoff_prune && s.g_cost >= best_cx) return;
+
+        // Visited-cache check (key computation is cheaper than Gaussian elimination).
+        auto const key = state_key(s, config.canonical_state_key);
+        if (auto const it = best_g.find(key); it != best_g.end() && it->second <= s.g_cost)
+            return;
+
+        // Heuristic computation — only for states that survived the cache check.
+        size_t const h1 = phase_cost(s);
+        size_t const h2 = linear_reversible_cnot_cost(s.output, config.h2_mode);
+
+        // Tighter cutoff: g + h2 is an admissible lower bound (h2 ≤ true output cost).
+        // Check before updating best_g to avoid claiming a slot we won't fill.
+        if (config.f_cutoff_prune && s.g_cost + h2 >= best_cx) return;
+
         best_g[key] = s.g_cost;
-        open.emplace(priority_of(s), std::move(s));
+        size_t const f = s.g_cost + h1 + h2;
+        open.emplace(Priority{f, h1, h2, std::numeric_limits<size_t>::max() - s.g_cost, counter++},
+                     std::move(s));
     };
 
     push(root);
@@ -194,12 +255,13 @@ SynthesisResult synthesize_phasepoly(PhasePolyProblem const& problem, PhasePolyC
 
         if (s.phase.has_no_columns()) {
             if (!s.output.is_square_identity()) finish_output(s, config.finish_mode);
+            if (config.f_cutoff_prune) best_cx = std::min(best_cx, s.g_cost);
             solutions.push_back(std::move(s));
             if (solutions.size() >= config.max_solutions) break;
             continue;
         }
 
-        for (auto const& [i, j] : active_row_pairs(s.phase)) {
+        for (auto const& [i, j] : active_row_pairs(s.phase, config.max_candidates)) {
             SearchState next = s;
             next.phase.apply_cnot(i, j);
             next.output.apply_cnot(i, j);

@@ -60,6 +60,7 @@ bool stop_requested() { return false; }
 #include "tableau/phasepoly/multiblock.hpp"
 #include "tableau/phasepoly/search.hpp"
 #include "tableau/phasepoly/synthesizer.hpp"
+#include "tableau/phasepoly/todd_preprocess.hpp"
 #include "tableau/stabilizer_tableau.hpp"
 #include "tableau/tableau_optimization.hpp"
 
@@ -223,7 +224,7 @@ static BlockResult benchmark_block(PhasePolyProblem const& problem,
     size_t const pmh_o = linear_reversible_cnot_cost(
         problem.output_matrix, LinearSynthesisMode::patel_markov_hayes);
 
-    // PhasePoly A* — skip if block is too large (avoids OOM)
+    // PhasePoly A*: optionally apply Todd per-block before synthesis.
     size_t cx_pp = 0, rz_pp = 0;
     if (m == 0) {
         cx_pp = pmh_o;
@@ -232,7 +233,13 @@ static BlockResult benchmark_block(PhasePolyProblem const& problem,
         cx_pp = FAIL;
         rz_pp = FAIL;
     } else {
-        auto const sr = synthesize_phasepoly(problem, cfg);
+        PhasePolyProblem pp_problem = problem;
+        if (cfg.apply_block_todd) {
+            if (auto const opt = todd_optimize_problem(problem)) {
+                pp_problem = *opt;
+            }
+        }
+        auto const sr = synthesize_phasepoly(pp_problem, cfg);
         cx_pp = sr.num_cx;
         rz_pp = sr.num_rz;
     }
@@ -367,6 +374,7 @@ int main(int argc, char** argv) {
         fmt::println("  --max-queue N       A* open-set cap (default: 5000)");
         fmt::println("  --max-exp N         A* expansion cap (default: 100000)");
         fmt::println("  --no-todd           Skip full-circuit Todd comparison");
+        fmt::println("  --block-todd        Apply Todd per-block before A* (TODD+pp+ in report)");
         fmt::println("  --joint-astar       Use joint A* on pairs (default: SSA merge, paper §3.3)");
         fmt::println("  -- Search improvements (all ON by default) --");
         fmt::println("  --no-canonical      Disable phase-column canonicalization in state key");
@@ -377,9 +385,10 @@ int main(int argc, char** argv) {
     }
 
     PhasePolyConfig cfg;
-    cfg.max_queue_size = 5000;
-    cfg.max_expansions = 100000;
-    cfg.max_solutions  = 5;
+    cfg.max_queue_size  = 5000;
+    cfg.max_expansions  = 100000;
+    cfg.max_solutions   = 5;
+    cfg.apply_block_todd = false;  // off by default; enable with --block-todd
 
     size_t max_rz  = 30;
     bool   no_todd = false;
@@ -399,6 +408,8 @@ int main(int argc, char** argv) {
             cfg.max_expansions = std::stoul(argv[++i]);
         } else if (arg == "--no-todd") {
             no_todd = true;
+        } else if (arg == "--block-todd") {
+            cfg.apply_block_todd = true;
         } else if (arg == "--joint-astar") {
             cfg.multi_block_strategy = MultiBlockStrategy::joint_astar;
         } else if (arg == "--no-canonical") {
@@ -470,10 +481,12 @@ int main(int argc, char** argv) {
         cfg.max_candidates == std::numeric_limits<size_t>::max()
             ? "all" : std::to_string(cfg.max_candidates);
     emit(fmt::format(
-        "Config: max_rz={} max_queue={} max_exp={} todd={} strategy={} "
+        "Config: max_rz={} max_queue={} max_exp={} todd={} block_todd={} strategy={} "
         "canonical={} cutoff={} max_cand={} scale_budget={}",
         max_rz, cfg.max_queue_size, cfg.max_expansions,
-        no_todd ? "off" : "on", strategy_str,
+        no_todd ? "off" : "on",
+        cfg.apply_block_todd ? "on" : "off",
+        strategy_str,
         cfg.canonical_state_key ? "on" : "off",
         cfg.f_cutoff_prune      ? "on" : "off",
         cand_str,
