@@ -59,6 +59,7 @@ bool stop_requested() { return false; }
 #include "tableau/phasepoly/phase_poly_problem.hpp"
 #include "tableau/phasepoly/multiblock.hpp"
 #include "tableau/phasepoly/search.hpp"
+#include "tableau/phasepoly/synthesizer.hpp"
 #include "tableau/stabilizer_tableau.hpp"
 #include "tableau/tableau_optimization.hpp"
 
@@ -132,6 +133,74 @@ problem_to_pauli_rotations(PhasePolyProblem const& problem) {
 }
 
 static constexpr size_t FAIL = SIZE_MAX / 2;
+
+// ---------------------------------------------------------------------------
+// Full-circuit synthesis: produce a QCir from the pp(1) strategy.
+//
+// Scans the input gate-by-gate (mirroring extract_phase_blocks_with_boundaries).
+// Each CX/Rz block is synthesised with synthesize_phasepoly; non-phasepoly
+// boundary gates (H, CZ, …) are passed through unchanged.
+// Blocks larger than max_rz fall back to MST to guarantee termination.
+// ---------------------------------------------------------------------------
+
+static std::optional<QCir> synthesize_circuit_pp(
+    QCir const& input, PhasePolyConfig const& cfg, size_t max_rz) {
+
+    size_t const n = input.get_num_qubits();
+    QCir result{n};
+    PhaseBlock current(n);
+
+    // Emit the synthesized gates for the current block, then reset it.
+    auto emit_block = [&]() {
+        if (current.empty()) return;
+        auto const problem = phase_block_to_problem(current);
+        auto const m       = problem.num_phase_terms();
+
+        if (m == 0) {
+            // Pure output-matrix block: just close O→I with PMH.
+            auto const ops = synthesize_linear_reversible(
+                problem.output_matrix, LinearSynthesisMode::patel_markov_hayes);
+            for (auto const& op : ops)
+                result.append(CXGate(), QubitIdList{op.control, op.target});
+        } else if (m > max_rz) {
+            // Block too large for A*: replay original gates verbatim.
+            for (auto const& op : current.ops()) {
+                if (op.is_cx())
+                    result.append(CXGate(), QubitIdList{op.control, op.target});
+                else
+                    result.append(PZGate(op.phase), QubitIdList{op.qubit()});
+            }
+        } else {
+            auto const sr = synthesize_phasepoly(problem, cfg);
+            for (auto const& op : sr.gates) {
+                if (op.is_cx())
+                    result.append(CXGate(), QubitIdList{op.control, op.target});
+                else
+                    result.append(PZGate(op.phase), QubitIdList{op.qubit()});
+            }
+        }
+        current = PhaseBlock(n);
+    };
+
+    for (auto const* gate : input.get_gates()) {
+        auto const& op    = gate->get_operation();
+        auto const  qubits = gate->get_qubits();
+
+        if (op == CXGate()) {
+            current.append_cx(static_cast<size_t>(qubits[0]),
+                               static_cast<size_t>(qubits[1]));
+        } else if (auto const pz = op.get_underlying_if<PZGate>()) {
+            current.append_rz(static_cast<size_t>(qubits[0]), pz->get_phase());
+        } else if (auto const rz = op.get_underlying_if<RZGate>()) {
+            current.append_rz(static_cast<size_t>(qubits[0]), rz->get_phase());
+        } else {
+            emit_block();
+            result.append(op, qubits);  // boundary gate passes through unchanged
+        }
+    }
+    emit_block();
+    return result;
+}
 
 // ---------------------------------------------------------------------------
 // per-block result
@@ -293,6 +362,7 @@ int main(int argc, char** argv) {
         fmt::println("  --set NAME          Run a predefined circuit set (table1: 19 circuits, extended: 28)");
         fmt::println("  --benchmark-dir D   Base directory for --set (default: benchmark/qc/optimized)");
         fmt::println("  --output FILE       Write results to FILE (default: results/benchmark_TIMESTAMP.txt)");
+        fmt::println("  --write-dir DIR     Write synthesized pp(1) circuits as QASM to DIR (for qcir equiv)");
         fmt::println("  --max-rz N          Skip PhasePoly A* for blocks with > N Rz terms (default: 30)");
         fmt::println("  --max-queue N       A* open-set cap (default: 5000)");
         fmt::println("  --max-exp N         A* expansion cap (default: 100000)");
@@ -314,7 +384,8 @@ int main(int argc, char** argv) {
     size_t max_rz  = 30;
     bool   no_todd = false;
     fs::path bench_dir  = "benchmark/qc/optimized";
-    fs::path output_path;  // empty = auto-generate
+    fs::path output_path;   // empty = auto-generate
+    fs::path write_dir;     // empty = do not write synthesized circuits
 
     std::vector<fs::path> circuit_paths;
 
@@ -340,6 +411,8 @@ int main(int argc, char** argv) {
             cfg.scale_budget_ssa = true;
         } else if (arg == "--benchmark-dir" && i + 1 < argc) {
             bench_dir = argv[++i];
+        } else if (arg == "--write-dir" && i + 1 < argc) {
+            write_dir = argv[++i];
         } else if (arg == "--output" && i + 1 < argc) {
             output_path = argv[++i];
         } else if (arg == "--set" && i + 1 < argc) {
@@ -422,6 +495,27 @@ int main(int argc, char** argv) {
         results.push_back(std::move(r));
     }
     fmt::println("");
+
+    // ── Optional: write synthesized pp(1) circuits for qcir equiv checking ──
+    if (!write_dir.empty()) {
+        fs::create_directories(write_dir);
+        fmt::println("Writing synthesized pp(1) circuits to '{}'...", write_dir.string());
+        size_t written = 0, failed = 0;
+        for (auto const& p : circuit_paths) {
+            auto qcir_opt = from_qc(p);
+            if (!qcir_opt) { ++failed; continue; }
+            auto synth = synthesize_circuit_pp(*qcir_opt, cfg, max_rz);
+            if (!synth) { ++failed; continue; }
+            auto const stem = p.stem().string();  // e.g. "tof_3_pyzx"
+            auto const out  = write_dir / (stem + "_pp.qasm");
+            std::ofstream f{out};
+            if (!f) { ++failed; continue; }
+            f << to_qasm(*synth);
+            ++written;
+            fmt::println("  {} → {}", stem, out.filename().string());
+        }
+        fmt::println("  {}/{} circuits written.\n", written, circuit_paths.size());
+    }
 
     // Columns: circuit | q | blk | original | pp(1) | pp(2) | pp(3) | pp(5) | mst+P | gray+P | todd+naive
     // Each cell shows "CX/total" where total = CX + Rz.
