@@ -661,28 +661,6 @@ GroupResult synthesize_joint(PhasePolyProblem const& p0,
 
 // ─── SSA rename → merge → single A* (paper §3.3) ──────────────────────────
 
-/// Tracks qubit → SSA row mapping. Each H gate on a qubit allocates a fresh row.
-class SSAContext {
-public:
-    explicit SSAContext(size_t n_logical) : _row_map(n_logical) {
-        std::iota(_row_map.begin(), _row_map.end(), 0);
-        _row_to_logical.resize(n_logical);
-        std::iota(_row_to_logical.begin(), _row_to_logical.end(), 0);
-    }
-
-    size_t num_rows() const { return _row_to_logical.size(); }
-    size_t remap(size_t logical_q) const { return _row_map.at(logical_q); }
-
-    void h_gate(size_t logical_q) {
-        _row_to_logical.push_back(logical_q);
-        _row_map.at(logical_q) = _row_to_logical.size() - 1;
-    }
-
-private:
-    std::vector<size_t> _row_map;
-    std::vector<size_t> _row_to_logical;
-};
-
 /// Merge k consecutive blocks (blocks[start..start+k-1]) into a single PhaseBlock
 /// using SSA renaming at H-boundaries. Returns nullopt if any boundary contains
 /// a non-H gate (unsafe to merge) or the index range is out of bounds.

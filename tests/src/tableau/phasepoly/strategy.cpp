@@ -33,7 +33,7 @@ QCir synthesize_via_phasepoly(QCir const& input) {
     REQUIRE(tableau_opt.has_value());
     auto result = to_qcir(*tableau_opt,
                           HOptSynthesisStrategy{},
-                          PhasePolySynthesisStrategy{});
+                          phasepoly::PhasePolySynthesisStrategy{});
     REQUIRE(result.has_value());
     return std::move(*result);
 }
@@ -104,7 +104,7 @@ TEST_CASE("Strategy: CNOT count is no worse than MST on simple circuits", "[phas
     REQUIRE(tableau_opt.has_value());
 
     auto mst_qcir = to_qcir(*tableau_opt, HOptSynthesisStrategy{}, MstSynthesisStrategy{});
-    auto pp_qcir  = to_qcir(*tableau_opt, HOptSynthesisStrategy{}, PhasePolySynthesisStrategy{});
+    auto pp_qcir  = to_qcir(*tableau_opt, HOptSynthesisStrategy{}, phasepoly::PhasePolySynthesisStrategy{});
 
     REQUIRE(mst_qcir.has_value());
     REQUIRE(pp_qcir.has_value());
