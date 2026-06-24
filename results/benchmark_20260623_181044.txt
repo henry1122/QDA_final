@@ -1,0 +1,22 @@
+Config: max_rz=30 max_queue=5000 max_exp=100000 todd=off strategy=ssa-merge canonical=on cutoff=on max_cand=all scale_budget=off
+
+circuit                         q  blk        pyzx       pp(1)       pp(2)       pp(3)       pp(5)       mst+P      gray+P  todd+naive
+                                            CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot
+--------------------------------------------------------------------------------------------------------------------------------------
+tof_3_pyzx                      5    6       14/32       14/32       14/32       14/32       14/32       28/46       26/44         n/a
+tof_4_pyzx                      7   11       23/52       23/52       23/52       23/52       23/52       45/74       43/72         n/a
+grover_5_pyzx                   9   84     222/484     220/472     220/472     223/475     221/473     342/594     340/592         n/a
+--------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                           -    -     259/568     257/556     257/556     260/559     258/557     415/714     409/708         n/a
+
+Notes:
+  Each cell: CX/total where total = CX + Rz (paper Table 1 format).
+  pyzx      = PyZX-pre-optimized input circuit (before PhasePoly synthesis).
+  pp(k)     = PhasePoly A* (ssa-merge) multi-block synthesis:
+              k=1: per-block independent A*
+              k>1: groups of k blocks SSA-merged into one problem, solved by single A*.
+              Use --joint-astar to switch to the experimental joint A* strategy.
+  mst+P / gray+P = block-level synthesis + PMH output-matrix pass (Rz = input Rz).
+  todd+naive = full-circuit Todd T-count opt + naive rotation synthesis.
+  * = PhasePoly A* skipped for blocks with > 30 Rz terms; MST used.
+Output saved to: results/benchmark_20260623_181044.txt

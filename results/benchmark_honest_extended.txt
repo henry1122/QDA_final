@@ -1,0 +1,93 @@
+=== Building benchmark-phasepoly ===
+[  0%] Built target fort
+[  0%] Built target fmt
+[  0%] Built target spdlog
+[  6%] Built target cadical
+[ 92%] Built target libabc
+[100%] Built target libqsyn.a
+[100%] Built target benchmark-phasepoly
+
+=== Extended suitable set (28 files: Table 1 + additional) ===
+PhasePoly benchmark — Wed Jun 17 02:20:00 CST 2026
+Binary   : /home/orlando/eda-s26/qdafinal/build/benchmark-phasepoly
+Set      : extended (28 circuits)
+Args     : --no-todd
+
+Config: max_rz=30 max_queue=5000 max_exp=100000 todd=off
+
+  tof_3_pyzx........................................ done  (blocks=6, Rz=18)
+  tof_4_pyzx........................................ done  (blocks=11, Rz=29)
+  tof_5_pyzx........................................ done  (blocks=15, Rz=40)
+  tof_10_pyzx....................................... done  (blocks=35, Rz=95)
+  barenco_tof_3_pyzx................................ done  (blocks=6, Rz=22)
+  barenco_tof_4_pyzx................................ done  (blocks=11, Rz=41)
+  barenco_tof_5_pyzx................................ done  (blocks=15, Rz=60)
+  barenco_tof_10_pyzx............................... done  (blocks=36, Rz=155)
+  grover_5_pyzx..................................... done  (blocks=84, Rz=252)
+  ham15-low_pyzx.................................... done  (blocks=53, Rz=125)
+  ham15-med_pyzx.................................... done  (blocks=109, Rz=325)
+  ham15-high_pyzx................................... done  (blocks=498, Rz=1594)
+  mod5_4_pyzx....................................... done  (blocks=4, Rz=15)
+  mod_mult_55_pyzx.................................. done  (blocks=10, Rz=37)
+  mod_red_21_pyzx................................... done  (blocks=37, Rz=91)
+  qcla_com_7_pyzx................................... done  (blocks=42, Rz=131)
+  qcla_mod_7_pyzx................................... done  (blocks=106, Rz=299)
+  rc_adder_6_pyzx................................... done  (blocks=27, Rz=62)
+  vbe_adder_3_pyzx.................................. done  (blocks=12, Rz=37)
+  Adder8_pyzx....................................... done  (blocks=35, Rz=132)
+  adder_8_pyzx...................................... done  (blocks=67, Rz=249)
+  csla_mux_3_original_pyzx.......................... done  (blocks=15, Rz=64)
+  csum_mux_9_corrected_pyzx......................... done  (blocks=28, Rz=113)
+  hwb6_pyzx......................................... done  (blocks=31, Rz=88)
+  mod_adder_1024_pyzx............................... done  (blocks=458, Rz=1368)
+  nth_prime6_pyzx................................... done  (blocks=112, Rz=369)
+  qcla_adder_10_pyzx................................ done  (blocks=58, Rz=185)
+  qft_4_pyzx........................................ done  (blocks=43, Rz=69)
+
+circuit                                  q  blk    Rz    pp(1)   pp(2)   pp(3)   pp(5)    mst+P  gstair+P   gray+P   naive+P  todd+naive
+---------------------------------------------------------------------------------------------------------------------------------------------
+tof_3_pyzx                               5    6    18       16      16      16      16       28        26       26        30         n/a
+tof_4_pyzx                               7   11    29       25      26      29      26       45        43       43        47         n/a
+tof_5_pyzx                               9   15    40       35      40      39      38       63        60       60        68         n/a
+tof_10_pyzx                             19   35    95       85      89      93      91      153       145      145       173         n/a
+barenco_tof_3_pyzx                       5    6    22       21      22      21      22       31        29       29        37         n/a
+barenco_tof_4_pyzx                       7   11    41       40      37      40      40       58        55       55        67         n/a
+barenco_tof_5_pyzx                       9   15    60       60      60      62      59       82        81       81        99         n/a
+barenco_tof_10_pyzx                     19   36   155      161     159     164     159      212       207      207       257         n/a
+grover_5_pyzx                            9   84   252      262     272     268     270      342       340      340       426         n/a
+ham15-low_pyzx                          17   53   125      227     255     255     252      293       306      294       330         n/a
+ham15-med_pyzx                          17  109   325      440     525     474     490      602       642      602       685         n/a
+ham15-high_pyzx                         20  498  1594     1798    1991    1925    1954     2649      2752     2612      3151         n/a
+mod5_4_pyzx                              5    4    15       17      17      17      17       24        23       22        32         n/a
+mod_mult_55_pyzx                         9   10    37       45      53      52      51       74        71       71        83         n/a
+mod_red_21_pyzx                         11   37    91       89      96      91      95      129       129      130       152         n/a
+qcla_com_7_pyzx                         24   42   131      137     153     149     156      204       214      212       248         n/a
+qcla_mod_7_pyzx                         26  106   299      301     364     338     347      484       513      480       543         n/a
+rc_adder_6_pyzx                         14   27    62       65      79      77      78      101        97       97       119         n/a
+vbe_adder_3_pyzx                        10   12    37       45      49      45      48       64        67       63        81         n/a
+Adder8_pyzx                             23   35   132      157     172     172     170      225       232      230       314         n/a
+adder_8_pyzx                            24   67   249      319     350     334     338      444       465      463       581         n/a
+csla_mux_3_original_pyzx                15   15    64       78      86      82      87      110       122      123       142         n/a
+csum_mux_9_corrected_pyzx               30   28   113      140     149     146     144      187       192      189       222         n/a
+hwb6_pyzx                                7   31    88      103     103     113     107      153       158      158       182         n/a
+mod_adder_1024_pyzx                     28  458  1368     1352    1602    1504    1538     2211      2186     2145      2559         n/a
+nth_prime6_pyzx                          9  112   369      391     438     421     426      611       615      607       727         n/a
+qcla_adder_10_pyzx                      36   58   185      195     210     206     218      290       299      281       325         n/a
+qft_4_pyzx                               5   43    69       42      48      44      46       69        68       68        78         n/a
+---------------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                                    -    -     -     6646    7461    7177    7283     9938     10137     9833     11758         n/a
+
+Notes:
+  pp(k) = PhasePoly A* with joint synthesis (Stage 6):
+          k=1: per-block independent A*
+          k>1: blocks partitioned into groups of k; each consecutive pair within
+               a group is synthesized jointly (a single CNOT can reduce parity
+               columns from BOTH blocks simultaneously); trailing singleton
+               within a group is synthesized independently.
+          Infeasible pairs (H-boundary singularity) and budget-exhausted pairs
+          fall back to independent A* — so pp(k>1) >= pp(k=1) is impossible.
+  mst+P / gstair+P / gray+P / naive+P = block-level synthesis + PMH output-matrix pass
+  todd+naive = full-circuit Todd T-count opt (Tableau pipeline) + naive rotation synthesis
+  * = PhasePoly A* skipped for blocks with > 30 Rz terms; MST used as fallback
+
+Results saved to: /home/orlando/eda-s26/qdafinal/results/benchmark_20260617_022000.txt

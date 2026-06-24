@@ -1,0 +1,38 @@
+Config: max_rz=30 max_queue=5000 max_exp=100000 todd=off strategy=ssa-merge canonical=off cutoff=off max_cand=all scale_budget=off
+
+circuit                         q  blk        pyzx       pp(1)       pp(2)       pp(3)       pp(5)       mst+P      gray+P  todd+naive
+                                            CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot      CX/tot
+--------------------------------------------------------------------------------------------------------------------------------------
+tof_3_pyzx                      5    6       14/32       16/34       16/34       16/34       16/34       28/46       26/44         n/a
+tof_4_pyzx                      7   11       23/52       25/54       25/54       25/54       25/54       45/74       43/72         n/a
+tof_5_pyzx                      9   15       32/72       35/75       35/75       35/75       37/77      63/103      60/100         n/a
+tof_10_pyzx                    19   35      77/172      85/180      91/186      89/184      93/188     153/248     145/240         n/a
+barenco_tof_3_pyzx              5    6       19/41       21/43       22/44       21/43       21/43       31/53       29/51         n/a
+barenco_tof_4_pyzx              7   11       39/80       40/81       40/81       40/81       40/81       58/99       55/96         n/a
+barenco_tof_5_pyzx              9   15      57/117      60/120      61/121      60/120      60/120      82/142      81/141         n/a
+barenco_tof_10_pyzx            19   36     151/306     161/316     162/317     161/316     161/316     212/367     207/362         n/a
+grover_5_pyzx                   9   84     222/484     262/514     266/518     268/520     266/518     342/594     340/592         n/a
+ham15-low_pyzx                 17   53     210/338     227/352     225/350     230/355     227/352     293/418     294/419         n/a
+ham15-med_pyzx                 17  109     390/722     440/765     446/771     438/763     427/752     602/927     602/927         n/a
+ham15-high_pyzx                20  498   1605/3216   1798/3392   1824/3418   1824/3417   1812/3406   2649/4243   2612/4206         n/a
+mod5_4_pyzx                     5    4       22/39       17/32       17/32       17/32       17/32       24/39       22/37         n/a
+mod_mult_55_pyzx                9   10       39/76       45/82       46/83       45/82       45/82      74/111      71/108         n/a
+mod_red_21_pyzx                11   37      78/179      89/180      89/180      90/181      89/180     129/220     130/221         n/a
+qcla_com_7_pyzx                24   42     127/258     137/268     138/269     137/268     138/269     204/335     212/343         n/a
+qcla_mod_7_pyzx                26  106     279/583     301/600     308/607     306/605     303/601     484/783     480/779         n/a
+rc_adder_6_pyzx                14   27      59/121      65/127      66/128      66/128      65/127     101/163      97/159         n/a
+vbe_adder_3_pyzx               10   12       47/84       45/82       45/82       45/82       45/82      64/101      63/100         n/a
+--------------------------------------------------------------------------------------------------------------------------------------
+TOTAL                           -    -   3490/6972   3869/7297   3922/7350   3913/7340   3887/7314   5638/9066   5569/8997         n/a
+
+Notes:
+  Each cell: CX/total where total = CX + Rz (paper Table 1 format).
+  pyzx      = PyZX-pre-optimized input circuit (before PhasePoly synthesis).
+  pp(k)     = PhasePoly A* (ssa-merge) multi-block synthesis:
+              k=1: per-block independent A*
+              k>1: groups of k blocks SSA-merged into one problem, solved by single A*.
+              Use --joint-astar to switch to the experimental joint A* strategy.
+  mst+P / gray+P = block-level synthesis + PMH output-matrix pass (Rz = input Rz).
+  todd+naive = full-circuit Todd T-count opt + naive rotation synthesis.
+  * = PhasePoly A* skipped for blocks with > 30 Rz terms; MST used.
+Output saved to: results/baseline_no_improvements.txt

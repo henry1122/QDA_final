@@ -8,11 +8,20 @@
 #pragma once
 
 #include <cstddef>
+#include <limits>
 #include <vector>
 
 #include "./gaussian.hpp"
 
 namespace qsyn::experimental::phasepoly {
+
+/// Multi-block synthesis strategy (used by `synthesize_block_group`).
+enum class MultiBlockStrategy {
+    /// SSA rename → merge all k blocks → single A* (paper §3.3, default).
+    ssa_merge,
+    /// Joint A* on consecutive pairs — experimental cross-block alternative.
+    joint_astar,
+};
 
 /**
  * @brief Tunables for `synthesize_phasepoly` (paper §3.2).
@@ -33,6 +42,19 @@ struct PhasePolyConfig {
     /// Adjacent phase-poly block group sizes to try (paper §3.3; Stage 5).
     /// The optimizer keeps the cheapest result across all sizes.
     std::vector<size_t> group_sizes = {1, 2, 3, 5};
+
+    /// Strategy for multi-block synthesis (k > 1 groups).
+    MultiBlockStrategy multi_block_strategy = MultiBlockStrategy::ssa_merge;
+
+    // ── Search improvements ───────────────────────────────────────────────────
+    /// Sort phase columns before hashing → deduplicate column-permuted states.
+    bool canonical_state_key = true;
+    /// Prune states where g + h2 ≥ best solution found so far (h2 is admissible).
+    bool f_cutoff_prune = true;
+    /// Keep only the top-K active pairs ranked by net benefit; SIZE_MAX = all pairs.
+    size_t max_candidates = std::numeric_limits<size_t>::max();
+    /// Scale max_expansions proportional to merged SSA block size (k > 1 groups).
+    bool scale_budget_ssa = false;
 
     /// Apply Todd phase-polynomial optimization to each phase block before synthesis.
     bool apply_block_todd = true;
